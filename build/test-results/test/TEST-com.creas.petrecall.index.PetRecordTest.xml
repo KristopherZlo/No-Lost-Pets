@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="com.creas.petrecall.index.PetRecordTest" tests="3" skipped="0" failures="0" errors="0" timestamp="2026-04-14T08:40:26.390Z" hostname="DESKTOP-V4NTG01" time="0.089">
+  <properties/>
+  <testcase name="invalidDimensionIdReturnsNull()" classname="com.creas.petrecall.index.PetRecordTest" time="0.075"/>
+  <testcase name="validDimensionIdResolvesToWorldKey()" classname="com.creas.petrecall.index.PetRecordTest" time="0.013"/>
+  <testcase name="storesRawChunkPositionLongWithoutMutation()" classname="com.creas.petrecall.index.PetRecordTest" time="0.0"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>

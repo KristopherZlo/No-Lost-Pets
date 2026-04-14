@@ -1,0 +1,28 @@
+{
+  "schemaVersion": 1,
+  "id": "pet_recall",
+  "version": "${version}",
+  "name": "Zlo's Pet Recall",
+  "description": "Recall pets from unloaded chunks without loading chunks (no chunk loading), with safe vanilla-style teleport spots and loaded-pet support.",
+  "authors": [
+    "ImZlo"
+  ],
+  "contact": {},
+  "license": "All-Rights-Reserved",
+  "icon": "assets/pet_recall/icon.png",
+  "environment": "*",
+  "entrypoints": {
+    "main": [
+      "com.creas.petrecall.PetRecallMod"
+    ]
+  },
+  "mixins": [
+    "pet-recall.mixins.json"
+  ],
+  "depends": {
+    "fabricloader": ">=0.18.4",
+    "fabric": "*",
+    "minecraft": "~${minecraft_version}",
+    "java": ">=21"
+  }
+}

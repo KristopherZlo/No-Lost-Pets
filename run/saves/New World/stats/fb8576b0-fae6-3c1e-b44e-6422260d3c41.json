@@ -1,0 +1,36 @@
+{
+  "stats": {
+    "minecraft:killed": {
+      "minecraft:wolf": 2
+    },
+    "minecraft:custom": {
+      "minecraft:time_since_rest": 8640,
+      "minecraft:walk_one_cm": 21893,
+      "minecraft:leave_game": 1,
+      "minecraft:mob_kills": 2,
+      "minecraft:damage_dealt": 970,
+      "minecraft:play_time": 8640,
+      "minecraft:jump": 44,
+      "minecraft:time_since_death": 8640,
+      "minecraft:sprint_one_cm": 3278,
+      "minecraft:total_world_time": 10019,
+      "minecraft:fly_one_cm": 154451,
+      "minecraft:crouch_one_cm": 13,
+      "minecraft:sneak_time": 67
+    },
+    "minecraft:used": {
+      "minecraft:grass_block": 1,
+      "minecraft:redstone_torch": 2,
+      "minecraft:stripped_birch_log": 5,
+      "minecraft:netherite_sword": 9,
+      "minecraft:oak_pressure_plate": 1,
+      "minecraft:redstone": 1,
+      "minecraft:wolf_spawn_egg": 4,
+      "minecraft:fire_charge": 2,
+      "minecraft:tnt": 5,
+      "minecraft:obsidian": 26,
+      "minecraft:fishing_rod": 5
+    }
+  },
+  "DataVersion": 4671
+}

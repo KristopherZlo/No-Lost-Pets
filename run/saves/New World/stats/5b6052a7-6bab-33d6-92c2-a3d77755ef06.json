@@ -1,0 +1,17 @@
+{
+  "stats": {
+    "minecraft:used": {
+      "minecraft:fox_spawn_egg": 1
+    },
+    "minecraft:custom": {
+      "minecraft:sprint_one_cm": 335,
+      "minecraft:time_since_rest": 303,
+      "minecraft:walk_one_cm": 644,
+      "minecraft:total_world_time": 311,
+      "minecraft:leave_game": 1,
+      "minecraft:play_time": 303,
+      "minecraft:time_since_death": 303
+    }
+  },
+  "DataVersion": 4671
+}

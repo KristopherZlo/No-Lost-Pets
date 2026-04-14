@@ -1,0 +1,30 @@
+{
+  "stats": {
+    "minecraft:custom": {
+      "minecraft:time_since_rest": 405,
+      "minecraft:walk_one_cm": 4470,
+      "minecraft:leave_game": 1,
+      "minecraft:mob_kills": 2,
+      "minecraft:walk_under_water_one_cm": 416,
+      "minecraft:play_time": 2547,
+      "minecraft:damage_dealt": 620,
+      "minecraft:jump": 35,
+      "minecraft:time_since_death": 383,
+      "minecraft:sprint_one_cm": 2411,
+      "minecraft:total_world_time": 2696,
+      "minecraft:fly_one_cm": 63919,
+      "minecraft:walk_on_water_one_cm": 217,
+      "minecraft:deaths": 1
+    },
+    "minecraft:killed": {
+      "animalgarden_redpanda:redpanda": 1,
+      "minecraft:wolf": 1
+    },
+    "minecraft:used": {
+      "minecraft:netherite_sword": 9,
+      "animalgarden_redpanda:redpanda_spawn_egg": 1,
+      "minecraft:wolf_spawn_egg": 2
+    }
+  },
+  "DataVersion": 4671
+}

@@ -1,0 +1,31 @@
+{
+  "stats": {
+    "minecraft:custom": {
+      "minecraft:time_since_rest": 7614,
+      "minecraft:walk_one_cm": 10908,
+      "minecraft:leave_game": 1,
+      "minecraft:walk_under_water_one_cm": 1687,
+      "minecraft:play_time": 7614,
+      "minecraft:jump": 75,
+      "minecraft:time_since_death": 7614,
+      "minecraft:sprint_one_cm": 4625,
+      "minecraft:total_world_time": 10205,
+      "minecraft:fly_one_cm": 132618,
+      "minecraft:walk_on_water_one_cm": 249,
+      "minecraft:crouch_one_cm": 146,
+      "minecraft:sneak_time": 243
+    },
+    "minecraft:used": {
+      "minecraft:oak_trapdoor": 1,
+      "minecraft:soul_sand": 1,
+      "minecraft:water_bucket": 11,
+      "minecraft:spruce_pressure_plate": 1,
+      "minecraft:wolf_spawn_egg": 4,
+      "minecraft:fire_charge": 2,
+      "minecraft:ender_pearl": 1,
+      "minecraft:obsidian": 30,
+      "minecraft:fishing_rod": 1
+    }
+  },
+  "DataVersion": 4671
+}

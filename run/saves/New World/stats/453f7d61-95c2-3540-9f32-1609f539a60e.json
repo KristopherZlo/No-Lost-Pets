@@ -1,0 +1,22 @@
+{
+  "stats": {
+    "minecraft:used": {
+      "minecraft:stone": 2,
+      "minecraft:wolf_spawn_egg": 1
+    },
+    "minecraft:custom": {
+      "minecraft:sprint_one_cm": 352,
+      "minecraft:time_since_rest": 1759,
+      "minecraft:walk_one_cm": 1649,
+      "minecraft:total_world_time": 5864,
+      "minecraft:leave_game": 1,
+      "minecraft:fly_one_cm": 31531,
+      "minecraft:sneak_time": 47,
+      "minecraft:play_time": 1759,
+      "minecraft:damage_dealt": 15,
+      "minecraft:jump": 14,
+      "minecraft:time_since_death": 1759
+    }
+  },
+  "DataVersion": 4671
+}

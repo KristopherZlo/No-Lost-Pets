@@ -1,0 +1,23 @@
+{
+  "stats": {
+    "minecraft:custom": {
+      "minecraft:sprint_one_cm": 4767,
+      "minecraft:time_since_rest": 4002,
+      "minecraft:walk_one_cm": 11099,
+      "minecraft:total_world_time": 9551,
+      "minecraft:leave_game": 1,
+      "minecraft:fly_one_cm": 58786,
+      "minecraft:play_time": 4002,
+      "minecraft:damage_dealt": 8,
+      "minecraft:jump": 47,
+      "minecraft:time_since_death": 4002,
+      "minecraft:animals_bred": 1
+    },
+    "minecraft:used": {
+      "animalgarden_redpanda:redpanda_spawn_egg": 1,
+      "minecraft:wolf_spawn_egg": 24,
+      "animalgarden_redpanda:himalayan_redpanda_spawn_egg": 1
+    }
+  },
+  "DataVersion": 4671
+}
