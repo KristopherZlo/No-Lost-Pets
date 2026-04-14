@@ -6,6 +6,8 @@ import com.creas.petrecall.runtime.AutoPetRecallController;
 import com.creas.petrecall.runtime.PetTracker;
 import net.fabricmc.api.ModInitializer;
 import net.fabricmc.fabric.api.command.v2.CommandRegistrationCallback;
+import net.fabricmc.fabric.api.entity.event.v1.ServerEntityWorldChangeEvents;
+import net.fabricmc.fabric.api.entity.event.v1.ServerPlayerEvents;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerEntityEvents;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerLifecycleEvents;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerTickEvents;
@@ -32,6 +34,9 @@ public final class PetRecallMod implements ModInitializer {
         ServerEntityEvents.ENTITY_LOAD.register(TRACKER::onEntityLoad);
         ServerEntityEvents.ENTITY_UNLOAD.register(TRACKER::onEntityUnload);
         ServerTickEvents.END_SERVER_TICK.register(AUTO_RECALL::onServerTick);
+        ServerPlayerEvents.JOIN.register(AUTO_RECALL::scheduleImmediate);
+        ServerPlayerEvents.AFTER_RESPAWN.register((oldPlayer, newPlayer, alive) -> AUTO_RECALL.scheduleImmediate(newPlayer));
+        ServerEntityWorldChangeEvents.AFTER_PLAYER_CHANGE_WORLD.register((player, origin, destination) -> AUTO_RECALL.scheduleImmediate(player));
         ServerLifecycleEvents.SERVER_STOPPED.register(server -> {
             TRACKER.clearRuntime();
             AUTO_RECALL.clearRuntime();

@@ -6,7 +6,6 @@ import com.creas.petrecall.index.PetRecord;
 import com.creas.petrecall.util.PetOwnershipUtil;
 import com.creas.petrecall.util.PetOwnershipUtil.OwnedPetData;
 import java.util.Collection;
-import java.util.Collections;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
@@ -36,6 +35,7 @@ public final class PetTracker {
         MinecraftServer server = world.getServer();
         if (ownedPet == null) {
             this.loadedPets.remove(entity.getUuid(), entity);
+            PetRecallMod.getRecallService().onPetRemoved(entity.getUuid());
             if (server != null) {
                 PetIndexState.get(server).remove(entity.getUuid());
             }
@@ -47,6 +47,7 @@ public final class PetTracker {
         }
 
         this.loadedPets.put(entity.getUuid(), entity);
+        PetRecallMod.getRecallService().onPetObserved(entity.getUuid());
         PetIndexState state = PetIndexState.get(server);
         state.put(PetRecord.fromEntity(world, entity, ownedPet.ownerUuid(), ownedPet.sitting(), ownedPet.health()));
     }
@@ -67,6 +68,7 @@ public final class PetTracker {
 
     public void removeRecord(MinecraftServer server, UUID petUuid) {
         this.loadedPets.remove(petUuid);
+        PetRecallMod.getRecallService().onPetRemoved(petUuid);
         PetIndexState.get(server).remove(petUuid);
     }
 

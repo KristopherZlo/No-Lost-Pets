@@ -18,6 +18,7 @@ public final class AutoPetRecallController {
     private static final long AUTO_PET_BACKOFF_TICKS = 40L;
     private static final int MAX_UNLOADED_PETS_PER_AUTO_RUN = 8;
     private static final double VANILLA_FOLLOW_TELEPORT_DISTANCE_SQ = 144.0D;
+    private static final double LARGE_TELEPORT_DISTANCE_SQ = 144.0D;
 
     private final PetTracker tracker;
     private final PetRecallService recallService;
@@ -44,6 +45,16 @@ public final class AutoPetRecallController {
         this.playerStates.keySet().removeIf(uuid -> !onlinePlayers.contains(uuid));
     }
 
+    public void scheduleImmediate(ServerPlayerEntity player) {
+        MinecraftServer server = player.getEntityWorld().getServer();
+        if (server == null || server.getOverworld() == null) {
+            return;
+        }
+
+        PlayerAutoState state = this.playerStates.computeIfAbsent(player.getUuid(), ignored -> new PlayerAutoState());
+        this.scheduleCheck(state, server.getOverworld().getTime());
+    }
+
     public void clearRuntime() {
         this.playerStates.clear();
         this.petBackoffUntilTick.clear();
@@ -60,20 +71,43 @@ public final class AutoPetRecallController {
         long currentChunk = player.getChunkPos().toLong();
         String currentDimension = player.getEntityWorld().getRegistryKey().getValue().toString();
         boolean onGround = player.isOnGround();
+        double currentX = player.getX();
+        double currentY = player.getY();
+        double currentZ = player.getZ();
 
-        boolean firstSeen = !state.initialized;
-        boolean chunkChanged = state.initialized && state.lastChunkPosLong != currentChunk;
-        boolean dimensionChanged = state.initialized && !state.lastDimensionId.equals(currentDimension);
-        boolean landed = state.initialized && !state.lastOnGround && onGround;
-        boolean continueBatch = state.continueNextBatchTick >= 0L && now >= state.continueNextBatchTick;
+        if (!state.initialized) {
+            state.initialized = true;
+            this.scheduleCheck(state, now);
+        } else {
+            if (state.lastChunkPosLong != currentChunk) {
+                this.scheduleCheck(state, now);
+            }
+            if (!state.lastDimensionId.equals(currentDimension)) {
+                this.scheduleCheck(state, now);
+            }
+            if (!state.lastOnGround && onGround) {
+                this.scheduleCheck(state, now);
+            }
 
-        state.initialized = true;
+            double dx = currentX - state.lastX;
+            double dy = currentY - state.lastY;
+            double dz = currentZ - state.lastZ;
+            double distanceSq = dx * dx + dy * dy + dz * dz;
+            if (distanceSq >= LARGE_TELEPORT_DISTANCE_SQ) {
+                this.scheduleCheck(state, now);
+            }
+        }
+
         state.lastChunkPosLong = currentChunk;
         state.lastDimensionId = currentDimension;
         state.lastOnGround = onGround;
+        state.lastX = currentX;
+        state.lastY = currentY;
+        state.lastZ = currentZ;
 
-        boolean trigger = firstSeen || chunkChanged || dimensionChanged || landed || continueBatch;
-        if (!trigger) {
+        boolean continueBatch = state.continueNextBatchTick >= 0L && now >= state.continueNextBatchTick;
+        boolean pendingCheck = state.pendingCheck && now >= state.pendingCheckTick;
+        if (!continueBatch && !pendingCheck) {
             return;
         }
 
@@ -94,10 +128,12 @@ public final class AutoPetRecallController {
 
         AutoRecallBatch batch = this.collectAutoRecallCandidates(server, player, now);
         if (batch.records().isEmpty()) {
+            state.pendingCheck = false;
             state.continueNextBatchTick = -1L;
             return;
         }
 
+        state.pendingCheck = false;
         UUID playerUuidFinal = playerUuid;
         boolean started = this.recallService.recallUnloadedForPlayerAsyncSilent(player, batch.records(), summary -> {
             if (server.getOverworld() == null) {
@@ -149,12 +185,15 @@ public final class AutoPetRecallController {
                 continue;
             }
 
-            // Keep auto-recall vanilla-like: only same-dimension companions auto-follow.
             if (!playerDimensionId.equals(record.dimensionId())) {
                 continue;
             }
 
             if (this.tracker.getLoadedPet(record.petUuid()) != null) {
+                continue;
+            }
+
+            if (this.recallService.isPetQuarantined(record.petUuid(), now)) {
                 continue;
             }
 
@@ -179,7 +218,6 @@ public final class AutoPetRecallController {
             return AutoRecallBatch.empty();
         }
 
-        // Improve locality for unloaded recalls and prefer more distant pets first within the same chunk.
         candidates.sort(Comparator
                 .comparing(PetRecord::dimensionId)
                 .thenComparingLong(PetRecord::chunkPosLong)
@@ -192,6 +230,13 @@ public final class AutoPetRecallController {
         }
 
         return new AutoRecallBatch(candidates, hasMoreCandidates);
+    }
+
+    private void scheduleCheck(PlayerAutoState state, long now) {
+        if (!state.pendingCheck || now < state.pendingCheckTick) {
+            state.pendingCheck = true;
+            state.pendingCheckTick = now;
+        }
     }
 
     private void applyBackoff(java.util.List<PetRecord> candidates, long backoffUntilTick) {
@@ -212,8 +257,13 @@ public final class AutoPetRecallController {
         long lastChunkPosLong;
         String lastDimensionId = "";
         boolean lastOnGround;
+        double lastX;
+        double lastY;
+        double lastZ;
         long nextRecallTick;
         long continueNextBatchTick = -1L;
+        boolean pendingCheck;
+        long pendingCheckTick;
     }
 
     private record AutoRecallBatch(java.util.List<PetRecord> records, boolean hasMoreCandidates) {
