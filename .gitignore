@@ -7,3 +7,6 @@ run/
 .tmp_gametest_src/
 *.log
 MANUAL_TESTS.md
+/icon.png
+*javap*.txt
+*_tmp*.txt
