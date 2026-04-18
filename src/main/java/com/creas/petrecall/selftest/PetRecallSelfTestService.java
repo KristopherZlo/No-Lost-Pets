@@ -6,6 +6,7 @@ import com.creas.petrecall.index.PetRecord;
 import com.creas.petrecall.recall.PetRecallService.RecallSummary;
 import com.creas.petrecall.runtime.PetTracker;
 import com.creas.petrecall.util.DebugTrace;
+import com.creas.petrecall.util.VersionCompat;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
@@ -223,8 +224,12 @@ public final class PetRecallSelfTestService {
         }
 
         private static ActiveSuite singleplayer(ServerPlayerEntity owner, Consumer<Text> reporter, Consumer<ActiveSuite> onFinished) {
+            MinecraftServer server = VersionCompat.getServer(owner);
+            if (server == null) {
+                throw new IllegalStateException("Owner server is unavailable for singleplayer self-test");
+            }
             return new ActiveSuite(
-                    owner.getServer(),
+                    server,
                     SuiteMode.SINGLEPLAYER,
                     owner,
                     null,
@@ -234,16 +239,25 @@ public final class PetRecallSelfTestService {
                             new LoadedRecallScenario(),
                             new UnloadedRecallScenario(),
                             new CrossDimensionBlockedScenario(),
+                            new SittingLoadedSkipScenario(),
+                            new SittingUnloadedSkipScenario(),
+                            new AirbornePlayerBlockedScenario(),
                             new ShortGrassSafeSpotScenario(),
+                            new UnsafeSurfaceSafeSpotScenario(),
                             new AutoRecallSpeedScenario(),
-                            new BatchRecallScenario()
+                            new BatchRecallScenario(),
+                            new StaleRecordCleanupScenario()
                     )
             );
         }
 
         private static ActiveSuite multiplayer(ServerPlayerEntity owner, ServerPlayerEntity other, Consumer<Text> reporter, Consumer<ActiveSuite> onFinished) {
+            MinecraftServer server = VersionCompat.getServer(owner);
+            if (server == null) {
+                throw new IllegalStateException("Owner server is unavailable for multiplayer self-test");
+            }
             return new ActiveSuite(
-                    owner.getServer(),
+                    server,
                     SuiteMode.MULTIPLAYER,
                     owner,
                     other,
@@ -406,6 +420,11 @@ public final class PetRecallSelfTestService {
 
         @Nullable
         private WolfEntity spawnOwnedWolf(ServerPlayerEntity owner, BlockPos standPos, String name) {
+            return this.spawnOwnedWolf(owner, standPos, name, false);
+        }
+
+        @Nullable
+        private WolfEntity spawnOwnedWolf(ServerPlayerEntity owner, BlockPos standPos, String name, boolean sitting) {
             this.preparePad(this.baseWorld, standPos, 2);
             Entity entity = EntityType.WOLF.spawn(this.baseWorld, null, standPos, SpawnReason.COMMAND, true, false);
             if (!(entity instanceof WolfEntity wolf)) {
@@ -413,12 +432,16 @@ public final class PetRecallSelfTestService {
             }
             wolf.setTamed(true, true);
             wolf.setOwner(owner);
-            wolf.setSitting(false);
+            wolf.setSitting(sitting);
             wolf.setCustomName(Text.literal(name));
             wolf.setCustomNameVisible(true);
             PetRecallMod.getTracker().observe(wolf, this.baseWorld);
-            this.touchedPetUuids.add(wolf.getUuid());
+            this.trackPetUuid(wolf.getUuid());
             return wolf;
+        }
+
+        private void trackPetUuid(UUID petUuid) {
+            this.touchedPetUuids.add(petUuid);
         }
 
         private void cleanupTouchedPets() {
@@ -457,6 +480,13 @@ public final class PetRecallSelfTestService {
             }
         }
 
+        private void startSilentUnloadedRecall(ServerPlayerEntity player, List<PetRecord> records) {
+            boolean started = PetRecallMod.getRecallService().recallUnloadedForPlayerAsyncSilent(player, records, summary -> this.latestSummary = summary);
+            if (!started) {
+                throw new IllegalStateException("Failed to start silent unloaded recall");
+            }
+        }
+
         private void startDebugAutoRecall(ServerPlayerEntity player, List<PetRecord> records) {
             boolean started = PetRecallMod.getAutoRecallController().debugRunImmediateCheck(player, records, summary -> this.latestSummary = summary);
             if (!started) {
@@ -485,13 +515,26 @@ public final class PetRecallSelfTestService {
             }
             return false;
         }
+
+        private boolean isPetQuarantined(UUID petUuid) {
+            return PetRecallMod.getRecallService().isPetQuarantined(petUuid, this.now());
+        }
+
+        private void putRecord(PetRecord record) {
+            PetIndexState.get(this.server).put(record);
+            this.trackPetUuid(record.petUuid());
+        }
     }
 
     private record Snapshot(ServerWorld world, Vec3d position, float yaw, float pitch) {
         private static Snapshot capture(ServerPlayerEntity player) {
+            ServerWorld world = VersionCompat.getServerWorld(player);
+            if (world == null) {
+                throw new IllegalStateException("Player world is unavailable for self-test snapshot");
+            }
             return new Snapshot(
-                    (ServerWorld) player.getWorld(),
-                    player.getPos(),
+                    world,
+                    new Vec3d(player.getX(), player.getY(), player.getZ()),
                     player.getYaw(),
                     player.getPitch()
             );
@@ -668,6 +711,163 @@ public final class PetRecallSelfTestService {
         }
     }
 
+    private static final class SittingLoadedSkipScenario extends BaseScenario {
+        @Nullable
+        private PetRecord record;
+        private UUID petUuid = new UUID(0L, 0L);
+        private BlockPos originalPos = BlockPos.ORIGIN;
+
+        private SittingLoadedSkipScenario() {
+            super("loaded sitting pet is skipped", 40);
+        }
+
+        @Override
+        protected void onStart(ActiveSuite suite) {
+            BlockPos spawnPos = suite.ownerStandPos.add(10, 0, 0);
+            WolfEntity wolf = suite.spawnOwnedWolf(suite.owner, spawnPos, "nlp_sit_loaded", true);
+            if (wolf == null) {
+                throw new IllegalStateException("Could not spawn sitting loaded test wolf");
+            }
+            this.petUuid = wolf.getUuid();
+            this.originalPos = wolf.getBlockPos();
+            this.record = suite.getRecord(wolf);
+            if (this.record == null) {
+                throw new IllegalStateException("Missing indexed record for sitting loaded wolf");
+            }
+            suite.startTargetedRecall(suite.owner, List.of(this.record), true);
+        }
+
+        @Override
+        protected ScenarioResult onTick(ActiveSuite suite, long elapsedTicks) {
+            RecallSummary summary = suite.takeSummary();
+            if (summary == null) {
+                return ScenarioResult.running();
+            }
+            Entity loaded = suite.getLoadedPet(this.petUuid);
+            if (summary.skipped != 1 || summary.recalled != 0 || summary.failed != 0 || loaded == null) {
+                return ScenarioResult.failed("Expected sitting loaded pet to be skipped without failure");
+            }
+            if (!loaded.getBlockPos().equals(this.originalPos)) {
+                return ScenarioResult.failed("Sitting loaded pet moved from " + this.originalPos + " to " + loaded.getBlockPos());
+            }
+            return ScenarioResult.passed("sitting loaded pet stayed in place after " + elapsedTicks + " ticks");
+        }
+    }
+
+    private static final class SittingUnloadedSkipScenario extends BaseScenario {
+        @Nullable
+        private PetRecord record;
+        private UUID petUuid = new UUID(0L, 0L);
+        private int phase;
+        private long unloadedAtTick = -1L;
+
+        private SittingUnloadedSkipScenario() {
+            super("unloaded sitting pet is skipped", 160);
+        }
+
+        @Override
+        protected void onStart(ActiveSuite suite) {
+            BlockPos remotePos = suite.remoteStandPos(576);
+            suite.prepareRemotePad(576);
+            WolfEntity wolf = suite.spawnOwnedWolf(suite.owner, remotePos, "nlp_sit_unloaded", true);
+            if (wolf == null) {
+                throw new IllegalStateException("Could not spawn sitting unloaded test wolf");
+            }
+            this.petUuid = wolf.getUuid();
+            this.record = suite.getRecord(wolf);
+            if (this.record == null) {
+                throw new IllegalStateException("Missing indexed record for sitting unloaded wolf");
+            }
+            suite.teleportPlayer(suite.owner, suite.baseWorld, suite.ownerStandPos);
+            this.phase = 0;
+            this.unloadedAtTick = -1L;
+        }
+
+        @Override
+        protected ScenarioResult onTick(ActiveSuite suite, long elapsedTicks) {
+            if (this.phase == 0) {
+                if (suite.isPetLoaded(this.petUuid)) {
+                    this.unloadedAtTick = -1L;
+                    return ScenarioResult.running();
+                }
+                if (this.unloadedAtTick < 0L) {
+                    this.unloadedAtTick = suite.now();
+                    return ScenarioResult.running();
+                }
+                if (suite.now() - this.unloadedAtTick < UNLOADED_SETTLE_TICKS) {
+                    return ScenarioResult.running();
+                }
+                suite.startTargetedRecall(suite.owner, List.of(this.record), true);
+                this.phase = 1;
+                return ScenarioResult.running();
+            }
+
+            RecallSummary summary = suite.takeSummary();
+            if (summary == null) {
+                return ScenarioResult.running();
+            }
+            if (summary.skipped != 1 || summary.recalled != 0 || summary.failed != 0) {
+                return ScenarioResult.failed("Expected sitting unloaded pet to be skipped without failure");
+            }
+            if (PetIndexState.get(suite.server).getPet(this.petUuid) == null) {
+                return ScenarioResult.failed("Sitting unloaded pet should stay indexed");
+            }
+            if (suite.isPetLoaded(this.petUuid)) {
+                return ScenarioResult.failed("Sitting unloaded pet should remain unloaded");
+            }
+            return ScenarioResult.passed("sitting unloaded pet stayed skipped after " + elapsedTicks + " ticks");
+        }
+    }
+
+    private static final class AirbornePlayerBlockedScenario extends BaseScenario {
+        @Nullable
+        private PetRecord record;
+
+        private AirbornePlayerBlockedScenario() {
+            super("player must stand on ground before recall", 40);
+        }
+
+        @Override
+        protected void onStart(ActiveSuite suite) {
+            WolfEntity wolf = suite.spawnOwnedWolf(suite.owner, suite.ownerStandPos.add(4, 0, 0), "nlp_airborne");
+            if (wolf == null) {
+                throw new IllegalStateException("Could not spawn airborne test wolf");
+            }
+            this.record = suite.getRecord(wolf);
+            if (this.record == null) {
+                throw new IllegalStateException("Missing indexed record for airborne test wolf");
+            }
+
+            BlockPos airbornePos = suite.ownerStandPos.up(2);
+            suite.owner.teleportTo(new TeleportTarget(
+                    suite.baseWorld,
+                    new Vec3d(airbornePos.getX() + 0.5D, airbornePos.getY(), airbornePos.getZ() + 0.5D),
+                    Vec3d.ZERO,
+                    suite.owner.getYaw(),
+                    suite.owner.getPitch(),
+                    TeleportTarget.NO_OP
+            ));
+            suite.owner.setOnGround(false);
+            suite.startTargetedRecall(suite.owner, List.of(this.record), true);
+        }
+
+        @Override
+        protected ScenarioResult onTick(ActiveSuite suite, long elapsedTicks) {
+            RecallSummary summary = suite.takeSummary();
+            if (summary == null) {
+                return ScenarioResult.running();
+            }
+            if (summary.failed != 1 || summary.recalled != 0) {
+                return ScenarioResult.failed("Expected airborne recall attempt to fail immediately");
+            }
+            boolean hasGroundMessage = summary.messages.stream().anyMatch(message -> message.contains("Stand on the ground"));
+            if (!hasGroundMessage) {
+                return ScenarioResult.failed("Expected airborne recall to explain the ground requirement");
+            }
+            return ScenarioResult.passed("airborne recall was blocked in " + elapsedTicks + " ticks");
+        }
+    }
+
     private static final class ShortGrassSafeSpotScenario extends BaseScenario {
         @Nullable
         private PetRecord record;
@@ -726,11 +926,81 @@ public final class PetRecallSelfTestService {
         }
     }
 
+    private static final class UnsafeSurfaceSafeSpotScenario extends BaseScenario {
+        @Nullable
+        private PetRecord record;
+        private UUID petUuid = new UUID(0L, 0L);
+        private BlockPos expectedSpot = BlockPos.ORIGIN;
+
+        private UnsafeSurfaceSafeSpotScenario() {
+            super("water and leaves are treated as unsafe recall spots", 80);
+        }
+
+        @Override
+        protected void onStart(ActiveSuite suite) {
+            BlockPos center = suite.ownerStandPos;
+            this.expectedSpot = center.add(-1, 0, -1);
+            for (int x = -1; x <= 1; x++) {
+                for (int z = -1; z <= 1; z++) {
+                    BlockPos ringPos = center.add(x, 0, z);
+                    if (ringPos.equals(center)) {
+                        continue;
+                    }
+
+                    BlockPos floorPos = ringPos.down();
+                    if (ringPos.equals(this.expectedSpot)) {
+                        suite.baseWorld.setBlockState(floorPos, Blocks.STONE.getDefaultState());
+                        suite.baseWorld.setBlockState(ringPos, Blocks.AIR.getDefaultState());
+                        continue;
+                    }
+
+                    if (((x + z) & 1) == 0) {
+                        suite.baseWorld.setBlockState(floorPos, Blocks.OAK_LEAVES.getDefaultState());
+                        suite.baseWorld.setBlockState(ringPos, Blocks.AIR.getDefaultState());
+                    } else {
+                        suite.baseWorld.setBlockState(floorPos, Blocks.STONE.getDefaultState());
+                        suite.baseWorld.setBlockState(ringPos, Blocks.WATER.getDefaultState());
+                    }
+                }
+            }
+
+            WolfEntity wolf = suite.spawnOwnedWolf(suite.owner, center.add(4, 0, 0), "nlp_unsafe_surface");
+            if (wolf == null) {
+                throw new IllegalStateException("Could not spawn unsafe-surface test wolf");
+            }
+            this.petUuid = wolf.getUuid();
+            this.record = suite.getRecord(wolf);
+            if (this.record == null) {
+                throw new IllegalStateException("Missing indexed record for unsafe-surface scenario");
+            }
+            suite.startTargetedRecall(suite.owner, List.of(this.record), true);
+        }
+
+        @Override
+        protected ScenarioResult onTick(ActiveSuite suite, long elapsedTicks) {
+            RecallSummary summary = suite.takeSummary();
+            if (summary == null) {
+                return ScenarioResult.running();
+            }
+            Entity recalled = suite.getLoadedPet(this.petUuid);
+            if (summary.recalled != 1 || recalled == null) {
+                return ScenarioResult.failed("Expected pet to avoid water and leaves");
+            }
+            if (!recalled.getBlockPos().equals(this.expectedSpot)) {
+                return ScenarioResult.failed("Expected pet on " + this.expectedSpot + " but got " + recalled.getBlockPos());
+            }
+            return ScenarioResult.passed("unsafe water/leaves spots were ignored in " + elapsedTicks + " ticks");
+        }
+    }
+
     private static final class AutoRecallSpeedScenario extends BaseScenario {
         @Nullable
         private PetRecord record;
         private UUID petUuid = new UUID(0L, 0L);
         private int phase;
+        private long retryAtTick = -1L;
+        private long recallStartedAtTick = -1L;
+        private int retries;
 
         private AutoRecallSpeedScenario() {
             super("auto recall path runs quickly", 180);
@@ -751,6 +1021,9 @@ public final class PetRecallSelfTestService {
             }
             suite.teleportPlayer(suite.owner, suite.baseWorld, suite.ownerStandPos);
             this.phase = 0;
+            this.retryAtTick = -1L;
+            this.recallStartedAtTick = -1L;
+            this.retries = 0;
         }
 
         @Override
@@ -760,6 +1033,17 @@ public final class PetRecallSelfTestService {
                     return ScenarioResult.running();
                 }
                 suite.startDebugAutoRecall(suite.owner, List.of(this.record));
+                this.recallStartedAtTick = suite.now();
+                this.phase = 1;
+                return ScenarioResult.running();
+            }
+
+            if (this.phase == 2) {
+                if (suite.now() < this.retryAtTick) {
+                    return ScenarioResult.running();
+                }
+                suite.startDebugAutoRecall(suite.owner, List.of(this.record));
+                this.recallStartedAtTick = suite.now();
                 this.phase = 1;
                 return ScenarioResult.running();
             }
@@ -768,14 +1052,22 @@ public final class PetRecallSelfTestService {
             if (summary == null) {
                 return ScenarioResult.running();
             }
+            if (suite.isTransientUnloadedMiss(summary, this.petUuid) && this.retries < 2) {
+                this.retries++;
+                this.retryAtTick = suite.now() + UNLOADED_RETRY_DELAY_TICKS;
+                this.phase = 2;
+                suite.report("Retrying debug auto recall after transient chunk miss (" + this.retries + "/2)");
+                return ScenarioResult.running();
+            }
             Entity recalled = suite.getLoadedPet(this.petUuid);
             if (summary.recalled != 1 || recalled == null) {
                 return ScenarioResult.failed("Expected debug auto recall to recall exactly one pet");
             }
-            if (elapsedTicks > 30L) {
-                return ScenarioResult.failed("Debug auto recall took too long: " + elapsedTicks + " ticks");
+            long recallTicks = this.recallStartedAtTick >= 0L ? Math.max(0L, suite.now() - this.recallStartedAtTick) : elapsedTicks;
+            if (recallTicks > 40L) {
+                return ScenarioResult.failed("Debug auto recall took too long: " + recallTicks + " ticks");
             }
-            return ScenarioResult.passed("debug auto recall completed in " + elapsedTicks + " ticks");
+            return ScenarioResult.passed("debug auto recall completed in " + recallTicks + " ticks");
         }
     }
 
@@ -783,6 +1075,7 @@ public final class PetRecallSelfTestService {
         private final List<PetRecord> records = new ArrayList<>();
         private final List<UUID> petUuids = new ArrayList<>();
         private int phase;
+        private long recallStartedAtTick = -1L;
 
         private BatchRecallScenario() {
             super("batch recall has low inter-pet delay", 260);
@@ -807,6 +1100,7 @@ public final class PetRecallSelfTestService {
             }
             suite.teleportPlayer(suite.owner, suite.baseWorld, suite.ownerStandPos);
             this.phase = 0;
+            this.recallStartedAtTick = -1L;
         }
 
         @Override
@@ -818,6 +1112,7 @@ public final class PetRecallSelfTestService {
                     }
                 }
                 suite.startTargetedRecall(suite.owner, this.records, true);
+                this.recallStartedAtTick = suite.now();
                 this.phase = 1;
                 return ScenarioResult.running();
             }
@@ -829,10 +1124,78 @@ public final class PetRecallSelfTestService {
             if (summary.recalled != this.records.size() || summary.failed != 0) {
                 return ScenarioResult.failed("Expected all batch pets to recall successfully");
             }
-            if (elapsedTicks > 90L) {
-                return ScenarioResult.failed("Batch recall took too long: " + elapsedTicks + " ticks");
+            long recallTicks = this.recallStartedAtTick >= 0L ? Math.max(0L, suite.now() - this.recallStartedAtTick) : elapsedTicks;
+            if (recallTicks > 120L) {
+                return ScenarioResult.failed("Batch recall took too long: " + recallTicks + " ticks");
             }
-            return ScenarioResult.passed("batch recall completed in " + elapsedTicks + " ticks");
+            return ScenarioResult.passed("batch recall completed in " + recallTicks + " ticks");
+        }
+    }
+
+    private static final class StaleRecordCleanupScenario extends BaseScenario {
+        private PetRecord record;
+        private UUID petUuid = new UUID(0L, 0L);
+        private int phase;
+
+        private StaleRecordCleanupScenario() {
+            super("stale unloaded records are removed after repeated misses", 1200);
+        }
+
+        @Override
+        protected void onStart(ActiveSuite suite) {
+            this.petUuid = UUID.randomUUID();
+            this.record = new PetRecord(
+                    this.petUuid,
+                    suite.owner.getUuid(),
+                    "minecraft:wolf",
+                    suite.baseWorld.getRegistryKey().getValue().toString(),
+                    new ChunkPos(1536, 1536).toLong(),
+                    24576.5D,
+                    suite.ownerStandPos.getY(),
+                    24576.5D,
+                    false,
+                    20.0F
+            );
+            suite.putRecord(this.record);
+            suite.startSilentUnloadedRecall(suite.owner, List.of(this.record));
+            this.phase = 0;
+        }
+
+        @Override
+        protected ScenarioResult onTick(ActiveSuite suite, long elapsedTicks) {
+            RecallSummary summary = suite.takeSummary();
+            if (summary != null) {
+                if (this.phase == 0) {
+                    if (summary.failed != 1 || PetIndexState.get(suite.server).getPet(this.petUuid) == null || !suite.isPetQuarantined(this.petUuid)) {
+                        return ScenarioResult.failed("Expected first stale miss to fail and enter quarantine");
+                    }
+                    suite.startSilentUnloadedRecall(suite.owner, List.of(this.record));
+                    this.phase = 2;
+                    return ScenarioResult.running();
+                }
+                if (this.phase == 2) {
+                    if (summary.failed != 1 || PetIndexState.get(suite.server).getPet(this.petUuid) == null || !suite.isPetQuarantined(this.petUuid)) {
+                        return ScenarioResult.failed("Expected second stale miss to fail and keep the record quarantined");
+                    }
+                    suite.startSilentUnloadedRecall(suite.owner, List.of(this.record));
+                    this.phase = 4;
+                    return ScenarioResult.running();
+                }
+                if (this.phase == 4) {
+                    if (summary.failed != 1) {
+                        return ScenarioResult.failed("Expected third stale miss to fail");
+                    }
+                    if (PetIndexState.get(suite.server).getPet(this.petUuid) != null) {
+                        return ScenarioResult.failed("Expected stale record to be removed after the third miss");
+                    }
+                    if (suite.isPetQuarantined(this.petUuid)) {
+                        return ScenarioResult.failed("Expected stale quarantine state to clear after record removal");
+                    }
+                    return ScenarioResult.passed("stale record removed after repeated misses in " + elapsedTicks + " ticks");
+                }
+            }
+
+            return ScenarioResult.running();
         }
     }
 

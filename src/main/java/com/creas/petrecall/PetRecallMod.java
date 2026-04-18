@@ -48,7 +48,7 @@ public final class PetRecallMod implements ModInitializer {
         ServerEntityEvents.ENTITY_UNLOAD.register(TRACKER::onEntityUnload);
         ServerTickEvents.END_SERVER_TICK.register(AUTO_RECALL::onServerTick);
         ServerTickEvents.END_SERVER_TICK.register(SELF_TEST::onServerTick);
-        ServerPlayerEvents.JOIN.register(AUTO_RECALL::scheduleImmediate);
+        ServerPlayerEvents.JOIN.register(AUTO_RECALL::scheduleAfterJoin);
         ServerPlayerEvents.AFTER_RESPAWN.register((oldPlayer, newPlayer, alive) -> AUTO_RECALL.scheduleImmediate(newPlayer));
         ServerEntityWorldChangeEvents.AFTER_PLAYER_CHANGE_WORLD.register((player, origin, destination) -> AUTO_RECALL.scheduleImmediate(player));
         ServerLifecycleEvents.SERVER_STOPPED.register(server -> {

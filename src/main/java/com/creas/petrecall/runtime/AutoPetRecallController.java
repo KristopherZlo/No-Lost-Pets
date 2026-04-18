@@ -20,6 +20,9 @@ public final class AutoPetRecallController {
     private static final long AUTO_RETRY_THROTTLE_TICKS = 4L;
     private static final long AUTO_RECALL_COOLDOWN_TICKS = 10L;
     private static final long AUTO_PET_BACKOFF_TICKS = 10L;
+    private static final long JOIN_REPAIR_DELAY_TICKS = 10L;
+    private static final long JOIN_RECALL_DELAY_TICKS = 20L;
+    private static final long JOIN_REPAIR_BOOT_WINDOW_TICKS = 600L;
     private static final int MAX_UNLOADED_PETS_PER_AUTO_RUN = 16;
     private static final double VANILLA_FOLLOW_TELEPORT_DISTANCE_SQ = 144.0D;
     private static final double LARGE_TELEPORT_DISTANCE_SQ = 144.0D;
@@ -29,6 +32,7 @@ public final class AutoPetRecallController {
     private final Map<UUID, PlayerAutoState> playerStates = new HashMap<>();
     private final Map<UUID, Long> petBackoffUntilTick = new HashMap<>();
     private final Set<UUID> suppressedPlayers = new HashSet<>();
+    private long sessionTick;
 
     public AutoPetRecallController(PetTracker tracker, PetRecallService recallService) {
         this.tracker = tracker;
@@ -40,6 +44,7 @@ public final class AutoPetRecallController {
             return;
         }
 
+        this.sessionTick++;
         long now = server.getOverworld().getTime();
         Set<UUID> onlinePlayers = new HashSet<>();
         for (ServerPlayerEntity player : server.getPlayerManager().getPlayerList()) {
@@ -67,10 +72,29 @@ public final class AutoPetRecallController {
         this.scheduleCheck(state, server.getOverworld().getTime(), "immediate event for " + player.getName().getString());
     }
 
+    public void scheduleAfterJoin(ServerPlayerEntity player) {
+        MinecraftServer server = VersionCompat.getServer(player);
+        if (server == null || server.getOverworld() == null) {
+            return;
+        }
+        if (this.suppressedPlayers.contains(player.getUuid())) {
+            return;
+        }
+
+        long now = server.getOverworld().getTime();
+        PlayerAutoState state = this.playerStates.computeIfAbsent(player.getUuid(), ignored -> new PlayerAutoState());
+        state.joinRepairPending = true;
+        state.joinRepairTick = computeJoinRepairTick(now);
+        this.scheduleCheck(state, computeJoinRecallTick(now), "join warmup for " + player.getName().getString());
+        DebugTrace.log("auto-recall", "Scheduled join warmup for %s repairTick=%d recallTick=%d sessionTick=%d",
+                DebugTrace.describePlayer(player), state.joinRepairTick, computeJoinRecallTick(now), this.sessionTick);
+    }
+
     public void clearRuntime() {
         this.playerStates.clear();
         this.petBackoffUntilTick.clear();
         this.suppressedPlayers.clear();
+        this.sessionTick = 0L;
     }
 
     public void suppressPlayer(UUID playerUuid) {
@@ -132,6 +156,7 @@ public final class AutoPetRecallController {
 
         UUID playerUuid = player.getUuid();
         PlayerAutoState state = this.playerStates.computeIfAbsent(playerUuid, ignored -> new PlayerAutoState());
+        this.maybeRunJoinRepair(server, player, state, now);
 
         long currentChunk = player.getChunkPos().toLong();
         String currentDimension = VersionCompat.getDimensionId(player);
@@ -310,6 +335,27 @@ public final class AutoPetRecallController {
         }
     }
 
+    private void maybeRunJoinRepair(MinecraftServer server, ServerPlayerEntity player, PlayerAutoState state, long now) {
+        if (!state.joinRepairPending || now < state.joinRepairTick) {
+            return;
+        }
+
+        state.joinRepairPending = false;
+        int ownerRecordCount = this.tracker.getOwnerRecords(server, player.getUuid()).size();
+        if (!shouldRunJoinRepair(this.sessionTick, ownerRecordCount)) {
+            DebugTrace.log("auto-recall", "Skipped join repair for %s indexedRecords=%d sessionTick=%d",
+                    DebugTrace.describePlayer(player), ownerRecordCount, this.sessionTick);
+            return;
+        }
+
+        int found = this.tracker.rescanLoadedPetsForOwner(server, player.getUuid());
+        DebugTrace.log("auto-recall", "Join repair completed for %s found=%d indexedBefore=%d",
+                DebugTrace.describePlayer(player), found, ownerRecordCount);
+        if (found > 0) {
+            this.scheduleCheck(state, now + 1L, "post-join repair for " + player.getName().getString());
+        }
+    }
+
     private void handleBatchCompleted(MinecraftServer server, ServerPlayerEntity player, UUID playerUuid, AutoRecallBatch batch, RecallSummary summary) {
         if (server.getOverworld() == null) {
             return;
@@ -350,6 +396,18 @@ public final class AutoPetRecallController {
         return dx * dx + dy * dy + dz * dz;
     }
 
+    static long computeJoinRepairTick(long now) {
+        return now + JOIN_REPAIR_DELAY_TICKS;
+    }
+
+    static long computeJoinRecallTick(long now) {
+        return now + JOIN_RECALL_DELAY_TICKS;
+    }
+
+    static boolean shouldRunJoinRepair(long sessionTick, int ownerRecordCount) {
+        return ownerRecordCount == 0 && sessionTick <= JOIN_REPAIR_BOOT_WINDOW_TICKS;
+    }
+
     private static final class PlayerAutoState {
         boolean initialized;
         long lastChunkPosLong;
@@ -362,6 +420,8 @@ public final class AutoPetRecallController {
         long continueNextBatchTick = -1L;
         boolean pendingCheck;
         long pendingCheckTick;
+        boolean joinRepairPending;
+        long joinRepairTick;
     }
 
     private record AutoRecallBatch(java.util.List<PetRecord> records, boolean hasMoreCandidates) {

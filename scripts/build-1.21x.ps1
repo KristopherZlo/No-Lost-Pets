@@ -8,22 +8,22 @@ $ErrorActionPreference = "Stop"
 $matrix = @{
     "1.21.8" = @{
         yarn = "1.21.8+build.1"
-        loader = "0.19.1"
+        loader = "0.18.2"
         fabric_api = "0.136.1+1.21.8"
     }
     "1.21.9" = @{
         yarn = "1.21.9+build.1"
-        loader = "0.19.1"
+        loader = "0.18.2"
         fabric_api = "0.134.1+1.21.9"
     }
     "1.21.10" = @{
         yarn = "1.21.10+build.3"
-        loader = "0.19.1"
+        loader = "0.18.2"
         fabric_api = "0.138.4+1.21.10"
     }
     "1.21.11" = @{
         yarn = "1.21.11+build.4"
-        loader = "0.19.1"
+        loader = "0.18.2"
         fabric_api = "0.141.3+1.21.11"
     }
 }

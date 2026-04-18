@@ -21,6 +21,7 @@ import org.jetbrains.annotations.Nullable;
 public final class DebugTrace {
     private static final DateTimeFormatter TIMESTAMP = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss.SSS", Locale.ROOT);
     private static final Object LOCK = new Object();
+    private static final boolean ENABLED = detectEnabled();
     private static volatile boolean sessionStarted;
     private static volatile @Nullable Path logPath;
 
@@ -28,6 +29,9 @@ public final class DebugTrace {
     }
 
     public static void startSession(String modId) {
+        if (!ENABLED) {
+            return;
+        }
         synchronized (LOCK) {
             if (sessionStarted) {
                 return;
@@ -57,6 +61,9 @@ public final class DebugTrace {
     }
 
     public static void stopSession(String reason) {
+        if (!ENABLED) {
+            return;
+        }
         synchronized (LOCK) {
             if (!sessionStarted) {
                 return;
@@ -68,6 +75,9 @@ public final class DebugTrace {
     }
 
     public static void log(String category, String message) {
+        if (!ENABLED) {
+            return;
+        }
         synchronized (LOCK) {
             if (!sessionStarted) {
                 startSession("pet_recall");
@@ -77,6 +87,9 @@ public final class DebugTrace {
     }
 
     public static void log(String category, String format, Object... args) {
+        if (!ENABLED) {
+            return;
+        }
         String message;
         try {
             message = String.format(Locale.ROOT, format, args);
@@ -87,17 +100,24 @@ public final class DebugTrace {
     }
 
     public static String describePlayer(@Nullable ServerPlayerEntity player) {
+        if (!ENABLED) {
+            return "";
+        }
         if (player == null) {
             return "player=null";
         }
+        String dimensionId = VersionCompat.getDimensionId(player);
         return "player=" + player.getName().getString()
                 + " uuid=" + player.getUuid()
-                + " dim=" + player.getWorld().getRegistryKey().getValue()
+                + " dim=" + dimensionId
                 + " pos=" + formatPos(player.getX(), player.getY(), player.getZ())
                 + " onGround=" + player.isOnGround();
     }
 
     public static String describeWorld(@Nullable ServerWorld world) {
+        if (!ENABLED) {
+            return "";
+        }
         if (world == null) {
             return "world=null";
         }
@@ -105,17 +125,24 @@ public final class DebugTrace {
     }
 
     public static String describeEntity(@Nullable Entity entity) {
+        if (!ENABLED) {
+            return "";
+        }
         if (entity == null) {
             return "entity=null";
         }
+        String dimensionId = VersionCompat.getDimensionId(entity);
         return "entityType=" + entity.getType().toString()
                 + " uuid=" + entity.getUuid()
-                + " dim=" + entity.getWorld().getRegistryKey().getValue()
+                + " dim=" + dimensionId
                 + " pos=" + formatPos(entity.getX(), entity.getY(), entity.getZ())
                 + " chunk=" + entity.getChunkPos();
     }
 
     public static String describeRecord(@Nullable PetRecord record) {
+        if (!ENABLED) {
+            return "";
+        }
         if (record == null) {
             return "record=null";
         }
@@ -130,10 +157,16 @@ public final class DebugTrace {
     }
 
     public static String describeChunk(ChunkPos chunkPos) {
+        if (!ENABLED) {
+            return "";
+        }
         return chunkPos + " long=" + chunkPos.toLong();
     }
 
     public static String describePetUuid(UUID petUuid) {
+        if (!ENABLED) {
+            return "";
+        }
         return "pet=" + petUuid;
     }
 
@@ -166,6 +199,19 @@ public final class DebugTrace {
             }
         } catch (IOException e) {
             System.err.println("NoLostPets debug trace write failed: " + e.getMessage());
+        }
+    }
+
+    private static boolean detectEnabled() {
+        String property = System.getProperty("nolostpets.debug");
+        if (property != null) {
+            return Boolean.parseBoolean(property);
+        }
+
+        try {
+            return FabricLoader.getInstance().isDevelopmentEnvironment();
+        } catch (Throwable ignored) {
+            return false;
         }
     }
 }
