@@ -1,6 +1,7 @@
 package com.creas.petrecall.index;
 
 import com.mojang.serialization.Codec;
+import com.creas.petrecall.util.DebugTrace;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
@@ -36,6 +37,7 @@ public final class PetIndexState extends PersistentState {
         this.pets = new HashMap<>(pets);
         this.petsByOwner = new HashMap<>();
         this.rebuildOwnerIndex();
+        DebugTrace.log("index", "Pet index state created; loadedRecords=%d ownerBuckets=%d", this.pets.size(), this.petsByOwner.size());
     }
 
     private void rebuildOwnerIndex() {
@@ -56,6 +58,7 @@ public final class PetIndexState extends PersistentState {
 
     public void put(PetRecord record) {
         PetRecord previous = this.pets.put(record.petUuid(), record);
+        DebugTrace.log("index", "PUT %s previous=%s", DebugTrace.describeRecord(record), DebugTrace.describeRecord(previous));
         if (previous != null && !previous.ownerUuid().equals(record.ownerUuid())) {
             Set<UUID> oldSet = this.petsByOwner.get(previous.ownerUuid());
             if (oldSet != null) {
@@ -72,8 +75,10 @@ public final class PetIndexState extends PersistentState {
     public void remove(UUID petUuid) {
         PetRecord removed = this.pets.remove(petUuid);
         if (removed == null) {
+            DebugTrace.log("index", "REMOVE ignored missing pet=%s", petUuid);
             return;
         }
+        DebugTrace.log("index", "REMOVE %s", DebugTrace.describeRecord(removed));
         Set<UUID> ownerSet = this.petsByOwner.get(removed.ownerUuid());
         if (ownerSet != null) {
             ownerSet.remove(petUuid);

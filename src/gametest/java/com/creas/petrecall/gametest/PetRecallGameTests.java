@@ -136,6 +136,126 @@ public final class PetRecallGameTests {
         });
     }
 
+    @GameTest(maxTicks = 60)
+    public void crossDimensionRecordIsSkipped(TestContext context) {
+        PetRecallMod.getTracker().clearRuntime();
+        buildPlatform(context);
+
+        ServerWorld world = context.getWorld();
+        ServerPlayerEntity player = createGroundedPlayer(context, PLAYER_POS);
+        PetRecord record = new PetRecord(
+                UUID.randomUUID(),
+                player.getUuid(),
+                "minecraft:wolf",
+                "minecraft:the_nether",
+                new ChunkPos(0, 0).toLong(),
+                0.5D,
+                world.getBottomY() + 2.0D,
+                0.5D,
+                false,
+                20.0F
+        );
+
+        AtomicReference<RecallSummary> summaryRef = new AtomicReference<>();
+        boolean started = PetRecallMod.getRecallService().recallSpecificPetsForPlayerAsync(player, List.of(record), true, summaryRef::set);
+        context.assertTrue(started, Text.literal("Expected cross-dimension targeted recall to start"));
+
+        context.runAtEveryTick(() -> {
+            RecallSummary summary = summaryRef.get();
+            if (summary == null) {
+                return;
+            }
+
+            context.assertEquals(1, summary.skipped, Text.literal("Expected cross-dimension record to be skipped"));
+            context.assertEquals(0, summary.recalled, Text.literal("Expected cross-dimension record to avoid recall"));
+            context.assertEquals(0, summary.failed, Text.literal("Expected cross-dimension record to skip cleanly"));
+            context.complete();
+        });
+    }
+
+    @GameTest(maxTicks = 80)
+    public void shortGrassCountsAsSafeRecallSpot(TestContext context) {
+        PetRecallMod.getTracker().clearRuntime();
+        buildPlatform(context);
+
+        ServerPlayerEntity player = createGroundedPlayer(context, PLAYER_POS);
+        BlockPos expectedSpot = PLAYER_POS.add(-1, 0, -1);
+        for (int x = -1; x <= 1; x++) {
+            for (int z = -1; z <= 1; z++) {
+                BlockPos ringPos = PLAYER_POS.add(x, 0, z);
+                if (ringPos.equals(PLAYER_POS)) {
+                    continue;
+                }
+                context.setBlockState(ringPos, ringPos.equals(expectedSpot) ? Blocks.SHORT_GRASS : Blocks.STONE);
+            }
+        }
+
+        WolfEntity wolf = context.spawnMob(EntityType.WOLF, PET_POS);
+        wolf.setTamed(true, true);
+        wolf.setOwner(player);
+        wolf.setSitting(false);
+        PetRecallMod.getTracker().observe(wolf, context.getWorld());
+
+        PetRecord record = PetIndexState.get(context.getWorld().getServer()).getPet(wolf.getUuid());
+        context.assertTrue(record != null, Text.literal("Expected indexed record for grass scenario"));
+
+        AtomicReference<RecallSummary> summaryRef = new AtomicReference<>();
+        boolean started = PetRecallMod.getRecallService().recallSpecificPetsForPlayerAsync(player, List.of(record), true, summaryRef::set);
+        context.assertTrue(started, Text.literal("Expected grass scenario recall to start"));
+
+        context.runAtEveryTick(() -> {
+            RecallSummary summary = summaryRef.get();
+            if (summary == null) {
+                return;
+            }
+
+            Entity recalled = PetRecallMod.getTracker().getLoadedPet(wolf.getUuid());
+            context.assertTrue(recalled != null, Text.literal("Expected recalled wolf to stay loaded"));
+            context.assertEquals(1, summary.recalled, Text.literal("Expected short-grass scenario to recall the wolf"));
+            context.assertEquals(context.getAbsolutePos(expectedSpot), recalled.getBlockPos(), Text.literal("Expected wolf on short grass spot"));
+            cleanupIndexedPet(context.getWorld(), wolf.getUuid());
+            context.killAllEntities();
+            context.complete();
+        });
+    }
+
+    @GameTest(maxTicks = 80)
+    public void loadedOwnershipMismatchDoesNotDeleteRecord(TestContext context) {
+        PetRecallMod.getTracker().clearRuntime();
+        buildPlatform(context);
+
+        ServerPlayerEntity owner = createGroundedPlayer(context, PLAYER_POS);
+        ServerPlayerEntity otherPlayer = createGroundedPlayer(context, PLAYER_POS.add(2, 0, 0));
+        WolfEntity wolf = context.spawnMob(EntityType.WOLF, PET_POS);
+        wolf.setTamed(true, true);
+        wolf.setOwner(owner);
+        wolf.setSitting(false);
+        PetRecallMod.getTracker().observe(wolf, context.getWorld());
+
+        PetRecord record = PetIndexState.get(context.getWorld().getServer()).getPet(wolf.getUuid());
+        context.assertTrue(record != null, Text.literal("Expected indexed record for ownership scenario"));
+
+        AtomicReference<RecallSummary> summaryRef = new AtomicReference<>();
+        boolean started = PetRecallMod.getRecallService().recallSpecificPetsForPlayerAsync(otherPlayer, List.of(record), true, summaryRef::set);
+        context.assertTrue(started, Text.literal("Expected ownership mismatch recall to start"));
+
+        context.runAtEveryTick(() -> {
+            RecallSummary summary = summaryRef.get();
+            if (summary == null) {
+                return;
+            }
+
+            context.assertEquals(1, summary.failed, Text.literal("Expected ownership mismatch to fail"));
+            context.assertTrue(
+                    PetIndexState.get(context.getWorld().getServer()).getPet(wolf.getUuid()) != null,
+                    Text.literal("Expected ownership mismatch to keep the record indexed")
+            );
+            cleanupIndexedPet(context.getWorld(), wolf.getUuid());
+            context.killAllEntities();
+            context.complete();
+        });
+    }
+
     @SuppressWarnings("removal")
     private static ServerPlayerEntity createGroundedPlayer(TestContext context, BlockPos relativePos) {
         ServerPlayerEntity player = context.createMockCreativeServerPlayerInWorld();

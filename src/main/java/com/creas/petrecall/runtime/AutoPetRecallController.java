@@ -1,7 +1,9 @@
 package com.creas.petrecall.runtime;
 
 import com.creas.petrecall.index.PetRecord;
+import com.creas.petrecall.recall.PetRecallService.RecallSummary;
 import com.creas.petrecall.recall.PetRecallService;
+import com.creas.petrecall.util.DebugTrace;
 import com.creas.petrecall.util.VersionCompat;
 import java.util.Collection;
 import java.util.Comparator;
@@ -10,14 +12,15 @@ import java.util.HashSet;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
+import java.util.function.Consumer;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.network.ServerPlayerEntity;
 
 public final class AutoPetRecallController {
-    private static final long AUTO_RETRY_THROTTLE_TICKS = 10L;
-    private static final long AUTO_RECALL_COOLDOWN_TICKS = 40L;
-    private static final long AUTO_PET_BACKOFF_TICKS = 40L;
-    private static final int MAX_UNLOADED_PETS_PER_AUTO_RUN = 8;
+    private static final long AUTO_RETRY_THROTTLE_TICKS = 4L;
+    private static final long AUTO_RECALL_COOLDOWN_TICKS = 10L;
+    private static final long AUTO_PET_BACKOFF_TICKS = 10L;
+    private static final int MAX_UNLOADED_PETS_PER_AUTO_RUN = 16;
     private static final double VANILLA_FOLLOW_TELEPORT_DISTANCE_SQ = 144.0D;
     private static final double LARGE_TELEPORT_DISTANCE_SQ = 144.0D;
 
@@ -25,6 +28,7 @@ public final class AutoPetRecallController {
     private final PetRecallService recallService;
     private final Map<UUID, PlayerAutoState> playerStates = new HashMap<>();
     private final Map<UUID, Long> petBackoffUntilTick = new HashMap<>();
+    private final Set<UUID> suppressedPlayers = new HashSet<>();
 
     public AutoPetRecallController(PetTracker tracker, PetRecallService recallService) {
         this.tracker = tracker;
@@ -40,6 +44,10 @@ public final class AutoPetRecallController {
         Set<UUID> onlinePlayers = new HashSet<>();
         for (ServerPlayerEntity player : server.getPlayerManager().getPlayerList()) {
             onlinePlayers.add(player.getUuid());
+            if (this.suppressedPlayers.contains(player.getUuid())) {
+                this.playerStates.remove(player.getUuid());
+                continue;
+            }
             this.tickPlayer(server, player, now);
         }
 
@@ -51,14 +59,70 @@ public final class AutoPetRecallController {
         if (server == null || server.getOverworld() == null) {
             return;
         }
+        if (this.suppressedPlayers.contains(player.getUuid())) {
+            return;
+        }
 
         PlayerAutoState state = this.playerStates.computeIfAbsent(player.getUuid(), ignored -> new PlayerAutoState());
-        this.scheduleCheck(state, server.getOverworld().getTime());
+        this.scheduleCheck(state, server.getOverworld().getTime(), "immediate event for " + player.getName().getString());
     }
 
     public void clearRuntime() {
         this.playerStates.clear();
         this.petBackoffUntilTick.clear();
+        this.suppressedPlayers.clear();
+    }
+
+    public void suppressPlayer(UUID playerUuid) {
+        this.suppressedPlayers.add(playerUuid);
+        this.playerStates.remove(playerUuid);
+    }
+
+    public void resumePlayer(UUID playerUuid) {
+        this.suppressedPlayers.remove(playerUuid);
+        this.playerStates.remove(playerUuid);
+    }
+
+    public boolean debugRunImmediateCheck(ServerPlayerEntity player, java.util.List<PetRecord> records, Consumer<RecallSummary> onComplete) {
+        if (records.isEmpty()) {
+            return false;
+        }
+
+        MinecraftServer server = VersionCompat.getServer(player);
+        if (server == null || server.getOverworld() == null || player.isRemoved() || player.isSpectator()
+                || !PetRecallService.isPlayerGroundedForRecall(player)) {
+            return false;
+        }
+
+        long now = server.getOverworld().getTime();
+        UUID playerUuid = player.getUuid();
+        PlayerAutoState state = this.playerStates.computeIfAbsent(playerUuid, ignored -> new PlayerAutoState());
+        java.util.ArrayList<PetRecord> batchRecords = new java.util.ArrayList<>(records);
+        boolean hasMoreCandidates = batchRecords.size() > MAX_UNLOADED_PETS_PER_AUTO_RUN;
+        if (hasMoreCandidates) {
+            batchRecords.subList(MAX_UNLOADED_PETS_PER_AUTO_RUN, batchRecords.size()).clear();
+        }
+
+        if (this.recallService.isRecallActive(playerUuid)) {
+            return false;
+        }
+
+        AutoRecallBatch batch = new AutoRecallBatch(batchRecords, hasMoreCandidates);
+        DebugTrace.log("auto-recall", "Starting debug auto recall batch for %s candidates=%d hasMore=%s",
+                DebugTrace.describePlayer(player), batch.records().size(), batch.hasMoreCandidates());
+        boolean started = this.recallService.recallUnloadedForPlayerAsyncSilent(player, batch.records(), summary -> {
+            this.handleBatchCompleted(server, player, playerUuid, batch, summary);
+            onComplete.accept(summary);
+        });
+        if (started) {
+            this.applyBackoff(batch.records(), now + AUTO_PET_BACKOFF_TICKS);
+            if (!batch.hasMoreCandidates()) {
+                state.nextRecallTick = now + AUTO_RECALL_COOLDOWN_TICKS;
+            }
+            DebugTrace.log("auto-recall", "Debug auto recall accepted for %s backoffUntil=%d nextRecallTick=%d",
+                    DebugTrace.describePlayer(player), now + AUTO_PET_BACKOFF_TICKS, state.nextRecallTick);
+        }
+        return started;
     }
 
     private void tickPlayer(MinecraftServer server, ServerPlayerEntity player, long now) {
@@ -71,23 +135,23 @@ public final class AutoPetRecallController {
 
         long currentChunk = player.getChunkPos().toLong();
         String currentDimension = VersionCompat.getDimensionId(player);
-        boolean onGround = player.isOnGround();
+        boolean onGround = PetRecallService.isPlayerGroundedForRecall(player);
         double currentX = player.getX();
         double currentY = player.getY();
         double currentZ = player.getZ();
 
         if (!state.initialized) {
             state.initialized = true;
-            this.scheduleCheck(state, now);
+            this.scheduleCheck(state, now, "initial observation");
         } else {
             if (state.lastChunkPosLong != currentChunk) {
-                this.scheduleCheck(state, now);
+                this.scheduleCheck(state, now, "chunk changed from " + state.lastChunkPosLong + " to " + currentChunk);
             }
             if (!state.lastDimensionId.equals(currentDimension)) {
-                this.scheduleCheck(state, now);
+                this.scheduleCheck(state, now, "dimension changed from " + state.lastDimensionId + " to " + currentDimension);
             }
             if (!state.lastOnGround && onGround) {
-                this.scheduleCheck(state, now);
+                this.scheduleCheck(state, now, "player landed on ground");
             }
 
             double dx = currentX - state.lastX;
@@ -95,7 +159,7 @@ public final class AutoPetRecallController {
             double dz = currentZ - state.lastZ;
             double distanceSq = dx * dx + dy * dy + dz * dz;
             if (distanceSq >= LARGE_TELEPORT_DISTANCE_SQ) {
-                this.scheduleCheck(state, now);
+                this.scheduleCheck(state, now, String.format(java.util.Locale.ROOT, "large movement distanceSq=%.2f", distanceSq));
             }
         }
 
@@ -129,6 +193,7 @@ public final class AutoPetRecallController {
 
         AutoRecallBatch batch = this.collectAutoRecallCandidates(server, player, now);
         if (batch.records().isEmpty()) {
+            DebugTrace.log("auto-recall", "No auto-recall candidates for %s", DebugTrace.describePlayer(player));
             state.pendingCheck = false;
             state.continueNextBatchTick = -1L;
             return;
@@ -136,36 +201,22 @@ public final class AutoPetRecallController {
 
         state.pendingCheck = false;
         UUID playerUuidFinal = playerUuid;
-        boolean started = this.recallService.recallUnloadedForPlayerAsyncSilent(player, batch.records(), summary -> {
-            if (server.getOverworld() == null) {
-                return;
-            }
-
-            PlayerAutoState callbackState = this.playerStates.get(playerUuidFinal);
-            if (callbackState == null) {
-                return;
-            }
-
-            long callbackNow = server.getOverworld().getTime();
-            if (summary.recalled > 0 && batch.hasMoreCandidates()) {
-                callbackState.continueNextBatchTick = callbackNow + 1L;
-                callbackState.nextRecallTick = callbackNow + 1L;
-                return;
-            }
-
-            callbackState.continueNextBatchTick = -1L;
-            if (summary.recalled > 0) {
-                callbackState.nextRecallTick = callbackNow + AUTO_RECALL_COOLDOWN_TICKS;
-            }
-        });
+        DebugTrace.log("auto-recall", "Starting auto recall batch for %s candidates=%d hasMore=%s", DebugTrace.describePlayer(player), batch.records().size(), batch.hasMoreCandidates());
+        boolean started = this.recallService.recallUnloadedForPlayerAsyncSilent(player, batch.records(), summary ->
+                this.handleBatchCompleted(server, player, playerUuidFinal, batch, summary)
+        );
         if (started) {
             this.applyBackoff(batch.records(), now + AUTO_PET_BACKOFF_TICKS);
             if (!batch.hasMoreCandidates()) {
                 state.nextRecallTick = now + AUTO_RECALL_COOLDOWN_TICKS;
             }
+            DebugTrace.log("auto-recall", "Auto recall accepted for %s backoffUntil=%d nextRecallTick=%d",
+                    DebugTrace.describePlayer(player), now + AUTO_PET_BACKOFF_TICKS, state.nextRecallTick);
         } else {
             state.continueNextBatchTick = -1L;
             state.nextRecallTick = now + AUTO_RETRY_THROTTLE_TICKS;
+            DebugTrace.log("auto-recall", "Auto recall rejected because recall is already active or could not start for %s retryTick=%d",
+                    DebugTrace.describePlayer(player), state.nextRecallTick);
         }
     }
 
@@ -180,27 +231,38 @@ public final class AutoPetRecallController {
         double playerY = player.getY();
         double playerZ = player.getZ();
         var candidates = new java.util.ArrayList<PetRecord>(Math.min(records.size(), MAX_UNLOADED_PETS_PER_AUTO_RUN + 4));
+        int skippedSitting = 0;
+        int skippedDimension = 0;
+        int skippedLoaded = 0;
+        int skippedQuarantined = 0;
+        int skippedBackoff = 0;
+        int skippedNear = 0;
 
         for (PetRecord record : records) {
             if (record.sitting()) {
+                skippedSitting++;
                 continue;
             }
 
             if (!playerDimensionId.equals(record.dimensionId())) {
+                skippedDimension++;
                 continue;
             }
 
             if (this.tracker.getLoadedPet(record.petUuid()) != null) {
+                skippedLoaded++;
                 continue;
             }
 
             if (this.recallService.isPetQuarantined(record.petUuid(), now)) {
+                skippedQuarantined++;
                 continue;
             }
 
             Long backoffUntil = this.petBackoffUntilTick.get(record.petUuid());
             if (backoffUntil != null) {
                 if (now < backoffUntil) {
+                    skippedBackoff++;
                     continue;
                 }
                 this.petBackoffUntilTick.remove(record.petUuid());
@@ -212,10 +274,14 @@ public final class AutoPetRecallController {
             double distanceSq = dx * dx + dy * dy + dz * dz;
             if (distanceSq >= VANILLA_FOLLOW_TELEPORT_DISTANCE_SQ) {
                 candidates.add(record);
+            } else {
+                skippedNear++;
             }
         }
 
         if (candidates.isEmpty()) {
+            DebugTrace.log("auto-recall", "Candidate scan empty for %s indexed=%d sitting=%d wrongDim=%d loaded=%d quarantined=%d backoff=%d near=%d",
+                    DebugTrace.describePlayer(player), records.size(), skippedSitting, skippedDimension, skippedLoaded, skippedQuarantined, skippedBackoff, skippedNear);
             return AutoRecallBatch.empty();
         }
 
@@ -230,14 +296,45 @@ public final class AutoPetRecallController {
             candidates.subList(MAX_UNLOADED_PETS_PER_AUTO_RUN, candidates.size()).clear();
         }
 
+        DebugTrace.log("auto-recall", "Candidate scan for %s indexed=%d selected=%d hasMore=%s sitting=%d wrongDim=%d loaded=%d quarantined=%d backoff=%d near=%d",
+                DebugTrace.describePlayer(player), records.size(), candidates.size(), hasMoreCandidates, skippedSitting, skippedDimension, skippedLoaded, skippedQuarantined, skippedBackoff, skippedNear);
+
         return new AutoRecallBatch(candidates, hasMoreCandidates);
     }
 
-    private void scheduleCheck(PlayerAutoState state, long now) {
+    private void scheduleCheck(PlayerAutoState state, long now, String reason) {
         if (!state.pendingCheck || now < state.pendingCheckTick) {
             state.pendingCheck = true;
             state.pendingCheckTick = now;
+            DebugTrace.log("auto-recall", "Scheduled auto recall check at tick=%d reason=%s", now, reason);
         }
+    }
+
+    private void handleBatchCompleted(MinecraftServer server, ServerPlayerEntity player, UUID playerUuid, AutoRecallBatch batch, RecallSummary summary) {
+        if (server.getOverworld() == null) {
+            return;
+        }
+
+        PlayerAutoState callbackState = this.playerStates.get(playerUuid);
+        if (callbackState == null) {
+            return;
+        }
+
+        long callbackNow = server.getOverworld().getTime();
+        if (summary.recalled > 0 && batch.hasMoreCandidates()) {
+            DebugTrace.log("auto-recall", "Auto recall batch partial success for %s recalled=%d skipped=%d failed=%d continuingNextTick",
+                    DebugTrace.describePlayer(player), summary.recalled, summary.skipped, summary.failed);
+            callbackState.continueNextBatchTick = callbackNow + 1L;
+            callbackState.nextRecallTick = callbackNow + 1L;
+            return;
+        }
+
+        callbackState.continueNextBatchTick = -1L;
+        if (summary.recalled > 0) {
+            callbackState.nextRecallTick = callbackNow + AUTO_RECALL_COOLDOWN_TICKS;
+        }
+        DebugTrace.log("auto-recall", "Auto recall batch finished for %s recalled=%d skipped=%d failed=%d nextRecallTick=%d",
+                DebugTrace.describePlayer(player), summary.recalled, summary.skipped, summary.failed, callbackState.nextRecallTick);
     }
 
     private void applyBackoff(java.util.List<PetRecord> candidates, long backoffUntilTick) {
