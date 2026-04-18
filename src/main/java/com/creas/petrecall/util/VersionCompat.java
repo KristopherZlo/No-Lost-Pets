@@ -1,14 +1,18 @@
 package com.creas.petrecall.util;
 
+import com.mojang.authlib.GameProfile;
 import java.lang.reflect.Method;
 import java.lang.reflect.Field;
+import java.lang.reflect.RecordComponent;
+import java.util.Locale;
+import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.function.Supplier;
 import net.minecraft.entity.Entity;
 import net.minecraft.nbt.NbtCompound;
-import net.minecraft.server.command.CommandManager;
 import net.minecraft.server.command.ServerCommandSource;
 import net.minecraft.server.MinecraftServer;
+import net.minecraft.server.network.ServerPlayerEntity;
 import net.minecraft.server.world.ServerWorld;
 import net.minecraft.util.math.ChunkPos;
 import net.minecraft.world.storage.EntityChunkDataAccess;
@@ -17,14 +21,12 @@ import org.jetbrains.annotations.Nullable;
 
 public final class VersionCompat {
     private static final Supplier<NbtCompound> EMPTY_NBT_SUPPLIER = () -> null;
+    private static final @Nullable Method GAME_PROFILE_GET_ID = findMethod(GameProfile.class, "getId");
+    private static final @Nullable Method GAME_PROFILE_ID = findMethod(GameProfile.class, "id");
+    private static final @Nullable Method GAME_PROFILE_GET_NAME = findMethod(GameProfile.class, "getName");
+    private static final @Nullable Method GAME_PROFILE_NAME = findMethod(GameProfile.class, "name");
     private static final @Nullable Method ENTITY_GET_ENTITY_WORLD = findMethod(Entity.class, "getEntityWorld");
     private static final @Nullable Method ENTITY_GET_WORLD = findMethod(Entity.class, "getWorld");
-    private static final @Nullable Method SOURCE_HAS_PERMISSION_LEVEL = findMethod(ServerCommandSource.class, "hasPermissionLevel", int.class);
-    private static final @Nullable Method SOURCE_GET_PERMISSIONS = findMethod(ServerCommandSource.class, "getPermissions");
-    private static final @Nullable Object ADMINS_CHECK = findStaticField(CommandManager.class, "ADMINS_CHECK");
-    private static final @Nullable Method ADMINS_CHECK_ALLOWS = SOURCE_GET_PERMISSIONS == null || ADMINS_CHECK == null
-            ? null
-            : findMethod(ADMINS_CHECK.getClass(), "allows", SOURCE_GET_PERMISSIONS.getReturnType());
     private static final @Nullable Field ENTITY_CHUNK_STORAGE = findField(EntityChunkDataAccess.class, "storage");
     private static final @Nullable Field ENTITY_CHUNK_EMPTY_CHUNKS = findField(EntityChunkDataAccess.class, "emptyChunks");
     private VersionCompat() {
@@ -54,14 +56,23 @@ public final class VersionCompat {
     }
 
     public static boolean hasAdminPermission(ServerCommandSource source) {
-        if (SOURCE_HAS_PERMISSION_LEVEL != null) {
-            return (boolean) invoke(source, SOURCE_HAS_PERMISSION_LEVEL, 2);
+        if (source.getPlayer() == null) {
+            return true;
         }
-        if (SOURCE_GET_PERMISSIONS != null && ADMINS_CHECK != null && ADMINS_CHECK_ALLOWS != null) {
-            Object permissions = invoke(source, SOURCE_GET_PERMISSIONS);
-            return permissions != null && (boolean) invoke(ADMINS_CHECK, ADMINS_CHECK_ALLOWS, permissions);
+
+        MinecraftServer server = source.getServer();
+        ServerPlayerEntity player = source.getPlayer();
+        GameProfile profile = player.getGameProfile();
+        if (matchesProfile(profile, server.getHostProfile())) {
+            return true;
         }
-        throw new IllegalStateException("Unsupported command permission API");
+
+        for (String operatorName : server.getPlayerManager().getOpList().getNames()) {
+            if (namesMatch(getProfileName(profile), operatorName)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     public static Object getChunkStorage(EntityChunkDataAccess dataAccess) {
@@ -118,15 +129,6 @@ public final class VersionCompat {
     }
 
     @Nullable
-    private static Object findStaticField(Class<?> owner, String name) {
-        try {
-            return owner.getField(name).get(null);
-        } catch (ReflectiveOperationException ignored) {
-            return null;
-        }
-    }
-
-    @Nullable
     private static Field findField(Class<?> owner, String name) {
         try {
             Field field = owner.getDeclaredField(name);
@@ -173,5 +175,91 @@ public final class VersionCompat {
         } catch (ReflectiveOperationException e) {
             throw new IllegalStateException("Failed to invoke storage method " + method.getName(), e);
         }
+    }
+
+    static boolean matchesProfileKey(GameProfile profile, @Nullable Object key) {
+        if (key instanceof GameProfile gameProfile) {
+            return matchesProfile(profile, gameProfile);
+        }
+        if (key == null) {
+            return false;
+        }
+
+        UUID keyUuid = extractRecordUuid(key);
+        UUID profileUuid = getProfileId(profile);
+        if (keyUuid != null && profileUuid != null && profileUuid.equals(keyUuid)) {
+            return true;
+        }
+
+        String keyName = extractRecordName(key);
+        return namesMatch(getProfileName(profile), keyName);
+    }
+
+    private static boolean matchesProfile(GameProfile expected, @Nullable GameProfile actual) {
+        if (actual == null) {
+            return false;
+        }
+        UUID expectedId = getProfileId(expected);
+        UUID actualId = getProfileId(actual);
+        if (expectedId != null && actualId != null && expectedId.equals(actualId)) {
+            return true;
+        }
+        return namesMatch(getProfileName(expected), getProfileName(actual));
+    }
+
+    private static boolean namesMatch(@Nullable String first, @Nullable String second) {
+        if (first == null || second == null) {
+            return false;
+        }
+        return first.toLowerCase(Locale.ROOT).equals(second.toLowerCase(Locale.ROOT));
+    }
+
+    @Nullable
+    private static UUID extractRecordUuid(Object key) {
+        Object value = readRecordComponentByType(key, UUID.class);
+        return value instanceof UUID uuid ? uuid : null;
+    }
+
+    @Nullable
+    private static String extractRecordName(Object key) {
+        Object value = readRecordComponentByType(key, String.class);
+        return value instanceof String string ? string : null;
+    }
+
+    @Nullable
+    private static Object readRecordComponentByType(Object recordLike, Class<?> type) {
+        Class<?> keyClass = recordLike.getClass();
+        if (!keyClass.isRecord()) {
+            return null;
+        }
+        try {
+            for (RecordComponent component : keyClass.getRecordComponents()) {
+                if (component.getType() != type) {
+                    continue;
+                }
+                return component.getAccessor().invoke(recordLike);
+            }
+        } catch (ReflectiveOperationException e) {
+            throw new IllegalStateException("Failed to inspect record key " + keyClass.getName(), e);
+        }
+        return null;
+    }
+
+    @Nullable
+    private static UUID getProfileId(GameProfile profile) {
+        Object value = invokeNoArgs(profile, GAME_PROFILE_GET_ID);
+        if (value == null) {
+            value = invokeNoArgs(profile, GAME_PROFILE_ID);
+        }
+        return value instanceof UUID uuid ? uuid : null;
+    }
+
+    @Nullable
+    private static String getProfileName(GameProfile profile) {
+        Object value = invokeNoArgs(profile, GAME_PROFILE_GET_NAME);
+        if (value == null) {
+            value = invokeNoArgs(profile, GAME_PROFILE_NAME);
+        }
+        return value instanceof String string ? string : null;
     }
 }
