@@ -4,6 +4,7 @@ import com.creas.petrecall.PetRecallMod;
 import com.creas.petrecall.index.PetIndexState;
 import com.creas.petrecall.recall.PetRecallService;
 import com.creas.petrecall.recall.PetRecallService.DebugStats;
+import com.creas.petrecall.util.VersionCompat;
 import com.mojang.brigadier.CommandDispatcher;
 import com.mojang.brigadier.context.CommandContext;
 import com.mojang.brigadier.exceptions.CommandSyntaxException;
@@ -20,7 +21,7 @@ public final class PetRecallCommand {
     public static void register(CommandDispatcher<ServerCommandSource> dispatcher, net.minecraft.command.CommandRegistryAccess registryAccess, CommandManager.RegistrationEnvironment environment) {
         dispatcher.register(
                 CommandManager.literal("petrecall")
-                        .requires(CommandManager.requirePermissionLevel(CommandManager.ADMINS_CHECK))
+                        .requires(VersionCompat::hasAdminPermission)
                         .then(CommandManager.literal("force")
                                 .then(CommandManager.argument("player", EntityArgumentType.player())
                                         .executes(PetRecallCommand::executeForce)))
@@ -39,13 +40,13 @@ public final class PetRecallCommand {
         ServerCommandSource source = context.getSource();
 
         if (getService().isRecallActive(player.getUuid())) {
-            source.sendError(Text.literal("Pet Recall is already running for " + player.getName().getString() + "."));
+            source.sendError(Text.literal("NoLostPets is already running for " + player.getName().getString() + "."));
             return 0;
         }
 
         boolean started = getService().recallAllForPlayerAsync(player, summary -> {
             source.sendFeedback(() -> Text.literal(
-                    "Pet Recall debug for " + player.getName().getString() + ": " +
+                    "NoLostPets debug for " + player.getName().getString() + ": " +
                             summary.recalled + " recalled, " +
                             summary.skipped + " skipped, " +
                             summary.failed + " failed, " +
@@ -65,11 +66,11 @@ public final class PetRecallCommand {
         });
 
         if (!started) {
-            source.sendError(Text.literal("Failed to start Pet Recall debug run."));
+            source.sendError(Text.literal("Failed to start NoLostPets debug run."));
             return 0;
         }
 
-        source.sendFeedback(() -> Text.literal("Pet Recall debug force started for " + player.getName().getString() + "."), false);
+        source.sendFeedback(() -> Text.literal("NoLostPets debug force started for " + player.getName().getString() + "."), false);
         return 1;
     }
 
@@ -77,7 +78,7 @@ public final class PetRecallCommand {
         ServerPlayerEntity player = EntityArgumentType.getPlayer(context, "player");
         int found = getService().rescanLoadedForPlayer(player);
         context.getSource().sendFeedback(
-                () -> Text.literal("Pet Recall: re-indexed " + found + " loaded pets for " + player.getName().getString() + "."),
+                () -> Text.literal("NoLostPets: re-indexed " + found + " loaded pets for " + player.getName().getString() + "."),
                 false
         );
         return found;
@@ -103,7 +104,7 @@ public final class PetRecallCommand {
         int ownerRecords = PetRecallMod.getTracker().getOwnerRecords(source.getServer(), player.getUuid()).size();
 
         source.sendFeedback(() -> Text.literal(
-                "Pet Recall stats for " + player.getName().getString() + ": indexed=" + ownerRecords +
+                "NoLostPets stats for " + player.getName().getString() + ": indexed=" + ownerRecords +
                         ", trackedLoaded=" + PetRecallMod.getTracker().getLoadedPetCount() +
                         ", activePlayers=" + stats.activePlayerRecalls() +
                         ", activePets=" + stats.activePetRecalls() +
@@ -121,7 +122,7 @@ public final class PetRecallCommand {
         int indexed = PetIndexState.get(source.getServer()).size();
 
         source.sendFeedback(() -> Text.literal(
-                "Pet Recall global stats: indexed=" + indexed +
+                "NoLostPets global stats: indexed=" + indexed +
                         ", trackedLoaded=" + PetRecallMod.getTracker().getLoadedPetCount() +
                         ", activePlayers=" + stats.activePlayerRecalls() +
                         ", activePets=" + stats.activePetRecalls() +

@@ -1,0 +1,19 @@
+{
+  "schemaVersion": 1,
+  "id": "pet_recall_gametest",
+  "version": "1.0.0",
+  "name": "NoLostPets Game Tests",
+  "environment": "*",
+  "entrypoints": {
+    "fabric-gametest": [
+      "com.creas.petrecall.gametest.PetRecallGameTests"
+    ]
+  },
+  "depends": {
+    "fabricloader": ">=0.18.4",
+    "fabric-gametest-api-v1": "*",
+    "minecraft": "*",
+    "java": ">=21",
+    "pet_recall": "*"
+  }
+}

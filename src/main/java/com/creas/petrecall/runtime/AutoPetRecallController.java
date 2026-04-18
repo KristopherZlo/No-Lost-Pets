@@ -2,6 +2,7 @@ package com.creas.petrecall.runtime;
 
 import com.creas.petrecall.index.PetRecord;
 import com.creas.petrecall.recall.PetRecallService;
+import com.creas.petrecall.util.VersionCompat;
 import java.util.Collection;
 import java.util.Comparator;
 import java.util.HashMap;
@@ -46,7 +47,7 @@ public final class AutoPetRecallController {
     }
 
     public void scheduleImmediate(ServerPlayerEntity player) {
-        MinecraftServer server = player.getEntityWorld().getServer();
+        MinecraftServer server = VersionCompat.getServer(player);
         if (server == null || server.getOverworld() == null) {
             return;
         }
@@ -69,7 +70,7 @@ public final class AutoPetRecallController {
         PlayerAutoState state = this.playerStates.computeIfAbsent(playerUuid, ignored -> new PlayerAutoState());
 
         long currentChunk = player.getChunkPos().toLong();
-        String currentDimension = player.getEntityWorld().getRegistryKey().getValue().toString();
+        String currentDimension = VersionCompat.getDimensionId(player);
         boolean onGround = player.isOnGround();
         double currentX = player.getX();
         double currentY = player.getY();
@@ -174,7 +175,7 @@ public final class AutoPetRecallController {
             return AutoRecallBatch.empty();
         }
 
-        String playerDimensionId = player.getEntityWorld().getRegistryKey().getValue().toString();
+        String playerDimensionId = VersionCompat.getDimensionId(player);
         double playerX = player.getX();
         double playerY = player.getY();
         double playerZ = player.getZ();

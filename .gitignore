@@ -1,5 +1,8 @@
 .gradle/
+.gradle-user-home/
 build/
+dist/
 logs/
 run/
+.tmp_gametest_src/
 *.log

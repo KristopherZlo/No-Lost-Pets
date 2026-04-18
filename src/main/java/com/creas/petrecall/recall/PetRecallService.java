@@ -2,12 +2,12 @@ package com.creas.petrecall.recall;
 
 import com.creas.petrecall.PetRecallMod;
 import com.creas.petrecall.index.PetRecord;
-import com.creas.petrecall.mixin.accessor.EntityChunkDataAccessAccessor;
 import com.creas.petrecall.mixin.accessor.ServerEntityManagerAccessor;
 import com.creas.petrecall.mixin.accessor.ServerWorldAccessor;
 import com.creas.petrecall.runtime.PetTracker;
 import com.creas.petrecall.util.PetOwnershipUtil;
 import com.creas.petrecall.util.PetOwnershipUtil.OwnedPetData;
+import com.creas.petrecall.util.VersionCompat;
 import it.unimi.dsi.fastutil.longs.LongSet;
 import java.util.AbstractList;
 import java.util.ArrayList;
@@ -48,8 +48,6 @@ import net.minecraft.world.chunk.Chunk;
 import net.minecraft.world.storage.ChunkDataAccess;
 import net.minecraft.world.storage.ChunkDataList;
 import net.minecraft.world.storage.EntityChunkDataAccess;
-import net.minecraft.world.storage.StorageIoWorker;
-import net.minecraft.world.storage.VersionedChunkStorage;
 import org.jetbrains.annotations.Nullable;
 
 public final class PetRecallService {
@@ -137,7 +135,7 @@ public final class PetRecallService {
             @Nullable List<PetRecord> presetRecords,
             boolean collectMessages
     ) {
-        MinecraftServer server = player.getEntityWorld().getServer();
+        MinecraftServer server = VersionCompat.getServer(player);
         if (server == null) {
             RecallSummary summary = new RecallSummary(collectMessages);
             summary.messages.add("Server is not available");
@@ -155,7 +153,7 @@ public final class PetRecallService {
 
         if (!player.isOnGround()) {
             RecallSummary summary = new RecallSummary(collectMessages);
-            summary.messages.add("Stand on the ground before using Pet Recall.");
+            summary.messages.add("Stand on the ground before using NoLostPets.");
             summary.failed = 1;
             synchronized (this.activeRecalls) {
                 this.activeRecalls.remove(playerUuid);
@@ -183,7 +181,7 @@ public final class PetRecallService {
     }
 
     private void sortRecordsForRecall(ServerPlayerEntity player, List<PetRecord> records, boolean includeLoadedPets) {
-        String playerDimensionId = player.getEntityWorld().getRegistryKey().getValue().toString();
+        String playerDimensionId = VersionCompat.getDimensionId(player);
         Map<UUID, Boolean> loadedCache = new HashMap<>(Math.max(16, records.size()));
         Comparator<PetRecord> comparator = (a, b) -> {
             if (includeLoadedPets) {
@@ -218,7 +216,7 @@ public final class PetRecallService {
     }
 
     public int rescanLoadedForPlayer(ServerPlayerEntity player) {
-        MinecraftServer server = player.getEntityWorld().getServer();
+        MinecraftServer server = VersionCompat.getServer(player);
         if (server == null) {
             return 0;
         }
@@ -250,7 +248,7 @@ public final class PetRecallService {
             }
 
             PetRecord record = runner.records.get(runner.index);
-            if (!runner.includeLoadedPets && !record.dimensionId().equals(player.getEntityWorld().getRegistryKey().getValue().toString())) {
+            if (!runner.includeLoadedPets && !record.dimensionId().equals(VersionCompat.getDimensionId(player))) {
                 runner.summary.skipped++;
                 runner.index++;
                 continue;
@@ -308,7 +306,7 @@ public final class PetRecallService {
             return;
         }
 
-        if (!runner.includeLoadedPets && !record.dimensionId().equals(player.getEntityWorld().getRegistryKey().getValue().toString())) {
+        if (!runner.includeLoadedPets && !record.dimensionId().equals(VersionCompat.getDimensionId(player))) {
             this.completeRecord(runner, record, RecallOutcome.SKIPPED);
             return;
         }
@@ -328,7 +326,7 @@ public final class PetRecallService {
                 return;
             }
 
-            if (!runner.includeLoadedPets && !record.dimensionId().equals(runner.player.getEntityWorld().getRegistryKey().getValue().toString())) {
+            if (!runner.includeLoadedPets && !record.dimensionId().equals(VersionCompat.getDimensionId(runner.player))) {
                 this.completeQueuedRecord(runner, record, chunkKey, RecallOutcome.SKIPPED);
                 return;
             }
@@ -347,7 +345,7 @@ public final class PetRecallService {
             }
 
             EntityChunkDataAccess dataAccess = getEntityChunkDataAccess(sourceWorld);
-            VersionedChunkStorage storage = ((EntityChunkDataAccessAccessor) dataAccess).pet_recall$getStorage();
+            Object storage = VersionCompat.getChunkStorage(dataAccess);
             dataAccess.readChunkData(chunkPos).whenComplete((chunkData, throwable) -> runner.server.execute(() ->
                     this.handleChunkDataLoaded(runner, record, sourceWorld, chunkPos, chunkKey, dataAccess, storage, chunkData, throwable)
             ));
@@ -368,7 +366,7 @@ public final class PetRecallService {
             ChunkPos chunkPos,
             ChunkOperationKey chunkKey,
             EntityChunkDataAccess dataAccess,
-            VersionedChunkStorage storage,
+            Object storage,
             @Nullable ChunkDataList<Entity> chunkData,
             @Nullable Throwable throwable
     ) {
@@ -385,7 +383,7 @@ public final class PetRecallService {
             return;
         }
 
-        if (!runner.includeLoadedPets && !record.dimensionId().equals(runner.player.getEntityWorld().getRegistryKey().getValue().toString())) {
+        if (!runner.includeLoadedPets && !record.dimensionId().equals(VersionCompat.getDimensionId(runner.player))) {
             this.completeQueuedRecord(runner, record, chunkKey, RecallOutcome.SKIPPED);
             return;
         }
@@ -469,7 +467,7 @@ public final class PetRecallService {
             PetRecord record,
             ChunkOperationKey chunkKey,
             EntityChunkDataAccess dataAccess,
-            VersionedChunkStorage storage,
+            Object storage,
             ChunkDataList<Entity> originalChunkData,
             NbtCompound petSnapshot,
             @Nullable Throwable writeThrowable
@@ -489,7 +487,7 @@ public final class PetRecallService {
             return;
         }
 
-        if (!runner.includeLoadedPets && !record.dimensionId().equals(runner.player.getEntityWorld().getRegistryKey().getValue().toString())) {
+        if (!runner.includeLoadedPets && !record.dimensionId().equals(VersionCompat.getDimensionId(runner.player))) {
             rollbackChunkWrite(dataAccess, storage, runner.server, originalChunkData, record.petUuid(), () ->
                     this.completeQueuedRecord(runner, record, chunkKey, RecallOutcome.SKIPPED)
             );
@@ -502,7 +500,14 @@ public final class PetRecallService {
             return;
         }
 
-        ServerWorld targetWorld = runner.player.getEntityWorld();
+        ServerWorld targetWorld = VersionCompat.getServerWorld(runner.player);
+        if (targetWorld == null) {
+            runner.summary.messages.add("Player world is unavailable for pet " + record.petUuid());
+            rollbackChunkWrite(dataAccess, storage, runner.server, originalChunkData, record.petUuid(), () ->
+                    this.completeQueuedRecord(runner, record, chunkKey, RecallOutcome.FAILED)
+            );
+            return;
+        }
         Entity recreated = EntityType.loadEntityWithPassengers(petSnapshot.copy(), targetWorld, SpawnReason.COMMAND, entity -> entity);
         if (recreated == null) {
             runner.summary.messages.add("Failed to recreate pet " + record.petUuid());
@@ -633,7 +638,11 @@ public final class PetRecallService {
             return RecallOutcome.SKIPPED;
         }
 
-        return this.recallLoadedPet(runner.player, runner.player.getEntityWorld(), loadedInChunk, runner.summary);
+        ServerWorld targetWorld = VersionCompat.getServerWorld(runner.player);
+        if (targetWorld == null) {
+            return RecallOutcome.FAILED;
+        }
+        return this.recallLoadedPet(runner.player, targetWorld, loadedInChunk, runner.summary);
     }
 
     private RecallOutcome handleMissingIndexedPet(MinecraftServer server, PetRecord record, RecallSummary summary, String messagePrefix) {
@@ -670,7 +679,11 @@ public final class PetRecallService {
             return RecallOutcome.SKIPPED;
         }
 
-        return this.recallLoadedPet(player, player.getEntityWorld(), loaded, summary);
+        ServerWorld targetWorld = VersionCompat.getServerWorld(player);
+        if (targetWorld == null) {
+            return RecallOutcome.FAILED;
+        }
+        return this.recallLoadedPet(player, targetWorld, loaded, summary);
     }
 
     private boolean tryBeginPetRecall(UUID petUuid) {
@@ -843,17 +856,17 @@ public final class PetRecallService {
         }
     }
 
-    private static CompletableFuture<Void> writeChunkDataAsync(EntityChunkDataAccess dataAccess, VersionedChunkStorage storage, ChunkDataList<Entity> chunkData) {
+    private static CompletableFuture<Void> writeChunkDataAsync(EntityChunkDataAccess dataAccess, Object storage, ChunkDataList<Entity> chunkData) {
         ChunkPos chunkPos = chunkData.getChunkPos();
-        LongSet emptyChunks = ((EntityChunkDataAccessAccessor) dataAccess).pet_recall$getEmptyChunks();
+        LongSet emptyChunks = VersionCompat.getEmptyChunks(dataAccess);
         if (chunkData.isEmpty()) {
             emptyChunks.add(chunkPos.toLong());
-            return storage.set(chunkPos, StorageIoWorker.NULL_NBT_SUPPLIER);
+            return VersionCompat.clearChunkData(storage, chunkPos);
         }
 
         NbtCompound chunkNbt = serializeChunkData(chunkData);
         emptyChunks.remove(chunkPos.toLong());
-        return storage.setNbt(chunkPos, chunkNbt);
+        return VersionCompat.writeChunkData(storage, chunkPos, chunkNbt);
     }
 
     private static NbtCompound serializeChunkData(ChunkDataList<Entity> chunkData) {
@@ -879,7 +892,7 @@ public final class PetRecallService {
 
     private static void rollbackChunkWrite(
             EntityChunkDataAccess dataAccess,
-            VersionedChunkStorage storage,
+            Object storage,
             MinecraftServer server,
             ChunkDataList<Entity> originalChunkData,
             UUID petUuid,

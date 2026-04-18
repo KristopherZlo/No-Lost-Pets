@@ -1,10 +1,10 @@
-# Zlo's Pet Recall
+# NoLostPets
 
 Recall your companion pets to your position, including pets stored in unloaded chunks, without loading their original chunks.
 
 ## Main feature
 
-**Pet Recall can move supported pets out of unloaded chunks without loading those chunks at all.**
+**NoLostPets can move supported pets out of unloaded chunks without loading those chunks at all.**
 
 That means it avoids triggering chunk mechanics in the source area while still bringing your companion back.
 
@@ -19,7 +19,7 @@ That means it avoids triggering chunk mechanics in the source area while still b
 
 ## Why this mod exists
 
-Pets can get left behind after long travel, teleports, server movement, or chunk unloads. Vanilla follow logic cannot help when the pet is not loaded. Zlo's Pet Recall fills that gap with a chunk-safe recall approach that keeps placement predictable.
+Pets can get left behind after long travel, teleports, server movement, or chunk unloads. Vanilla follow logic cannot help when the pet is not loaded. NoLostPets fills that gap with a chunk-safe recall approach that keeps placement predictable.
 
 ## Compatibility
 

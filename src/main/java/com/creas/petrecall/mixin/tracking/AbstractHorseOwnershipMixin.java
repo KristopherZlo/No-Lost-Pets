@@ -1,6 +1,7 @@
 package com.creas.petrecall.mixin.tracking;
 
 import com.creas.petrecall.PetRecallMod;
+import com.creas.petrecall.util.VersionCompat;
 import net.minecraft.entity.Entity;
 import net.minecraft.entity.LivingEntity;
 import net.minecraft.entity.passive.AbstractHorseEntity;
@@ -26,7 +27,8 @@ public abstract class AbstractHorseOwnershipMixin {
 
     private void pet_recall$refreshTracker() {
         Entity self = (Entity) (Object) this;
-        if (self.getEntityWorld() instanceof ServerWorld serverWorld) {
+        ServerWorld serverWorld = VersionCompat.getServerWorld(self);
+        if (serverWorld != null) {
             PetRecallMod.getTracker().observe(self, serverWorld);
         }
     }

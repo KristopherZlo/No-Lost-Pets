@@ -43,6 +43,6 @@ public final class PetRecallMod implements ModInitializer {
         });
         CommandRegistrationCallback.EVENT.register(PetRecallCommand::register);
 
-        LOGGER.info("Pet Recall initialized");
+        LOGGER.info("NoLostPets initialized");
     }
 }
