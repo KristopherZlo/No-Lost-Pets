@@ -3,6 +3,9 @@ plugins {
     id "maven-publish"
 }
 
+import java.nio.charset.StandardCharsets
+import java.util.UUID
+
 version = project.mod_version
 group = project.maven_group
 
@@ -18,6 +21,10 @@ def artifactVersion = supportedMinecraftMin == supportedMinecraftMax
         ? project.version.toString()
         : "${project.version}+mc${supportedMinecraftDisplay}"
 def loomRunDir = (findProperty("loom_run_dir") ?: "run").toString()
+def loomTestUsername = (findProperty("loom_test_username") ?: "NoLostPetsTest").toString()
+def loomTestUuid = (findProperty("loom_test_uuid")
+        ?: UUID.nameUUIDFromBytes(("OfflinePlayer:" + loomTestUsername).getBytes(StandardCharsets.UTF_8)).toString())
+        .toString()
 
 base {
     archivesName = project.archives_base_name
@@ -34,6 +41,10 @@ repositories {
 loom {
     runs.configureEach {
         runDir = loomRunDir
+    }
+
+    runs.named("client") {
+        programArgs "--username", loomTestUsername, "--uuid", loomTestUuid
     }
 }
 

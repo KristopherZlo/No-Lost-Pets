@@ -6,3 +6,4 @@ logs/
 run/
 .tmp_gametest_src/
 *.log
+MANUAL_TESTS.md

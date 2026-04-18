@@ -2,6 +2,8 @@ param(
     [Parameter(Mandatory = $true)]
     [string]$Version,
     [string]$JavaHome,
+    [string]$Username = "NoLostPetsTest",
+    [string]$Uuid,
     [switch]$NoDaemon,
     [Parameter(ValueFromRemainingArguments = $true)]
     [string[]]$GradleArgs
@@ -171,6 +173,7 @@ $target = $matrix[$Version]
 $repoRoot = Split-Path -Parent $PSScriptRoot
 $gradle = Join-Path $repoRoot "gradlew.bat"
 $runDir = "run\$Version"
+$effectiveUuid = if ($Uuid) { $Uuid } else { $null }
 
 Initialize-SharedRuntime -RepoRoot $repoRoot -Version $Version
 
@@ -182,7 +185,12 @@ $commandArgs = @(
     "-Ploader_version=$($target.loader)"
     "-Pfabric_version=$($target.fabric_api)"
     "-Ploom_run_dir=$runDir"
+    "-Ploom_test_username=$Username"
 )
+
+if ($effectiveUuid) {
+    $commandArgs += "-Ploom_test_uuid=$effectiveUuid"
+}
 
 if ($NoDaemon) {
     $commandArgs += "--no-daemon"
