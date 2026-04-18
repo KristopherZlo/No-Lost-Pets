@@ -4,7 +4,7 @@
 
 ![Minecraft](https://img.shields.io/badge/Minecraft-1.21.8--1.21.11-5E7C16?style=for-the-badge)
 ![Loader](https://img.shields.io/badge/Loader-Fabric-DBD0B4?style=for-the-badge)
-![Environment](https://img.shields.io/badge/Environment-Server--Side-1F6FEB?style=for-the-badge)
+![Environment](https://img.shields.io/badge/Environment-Server%20%26%20Singleplayer-1F6FEB?style=for-the-badge)
 ![License](https://img.shields.io/badge/License-GPL--3.0-2EA043?style=for-the-badge)
 
 > Pet recall without chunk loading.
