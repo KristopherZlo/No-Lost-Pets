@@ -8,7 +8,7 @@
     "Zlo"
   ],
   "contact": {},
-  "license": "All-Rights-Reserved",
+  "license": "GPL-3.0-only",
   "icon": "assets/pet_recall/icon.png",
   "environment": "*",
   "entrypoints": {

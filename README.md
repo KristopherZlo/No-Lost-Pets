@@ -5,7 +5,7 @@
 ![Minecraft](https://img.shields.io/badge/Minecraft-1.21.8--1.21.11-5E7C16?style=for-the-badge)
 ![Loader](https://img.shields.io/badge/Loader-Fabric-DBD0B4?style=for-the-badge)
 ![Environment](https://img.shields.io/badge/Environment-Server--Side-1F6FEB?style=for-the-badge)
-![License](https://img.shields.io/badge/License-All--Rights--Reserved-BD561D?style=for-the-badge)
+![License](https://img.shields.io/badge/License-GPL--3.0-2EA043?style=for-the-badge)
 
 > Pet recall without chunk loading.
 >
@@ -44,12 +44,18 @@ If the real problem is "my pet is lost somewhere outside simulation distance", t
 - Recalls supported pets from unloaded chunks without loading the source chunk.
 - Recalls already loaded pets too.
 - Uses safe vanilla-style placement checks near the owner.
+- Treats short grass as valid empty space and avoids water, fluids, and leaves.
 - Skips sitting pets.
+- Blocks cross-dimension recall on purpose.
+- Preserves ownership checks for both loaded and unloaded recall paths.
 - Works automatically in the background for unloaded pets.
-- Triggers automatic checks on join, respawn, dimension change, and major movement.
+- Triggers automatic checks on join, respawn, dimension change, chunk movement, landing, and major movement.
+- Uses a delayed join warmup and optional owner-only repair scan instead of heavy immediate work.
+- Batches unloaded recalls and throttles retries/backoff to reduce server spikes.
 - Keeps per-world pet index data on the server.
 - Cleans up stale records after repeated misses.
 - Supports vanilla tameables and many modded pets with standard owner/sit NBT.
+- Includes built-in admin stats and verify/self-test commands.
 - Ships as one universal jar for Minecraft `1.21.8` through `1.21.11`.
 
 ## Commands
@@ -64,6 +70,14 @@ All commands require admin/operator permission.
   Shows global runtime/index stats.
 - `/petrecall stats <player>`
   Shows stats scoped to one player.
+- `/petrecall verify singleplayer`
+  Runs the built-in singleplayer self-test suite.
+- `/petrecall verify multiplayer <otherPlayer>`
+  Runs the ownership-focused multiplayer self-test suite.
+- `/petrecall verify status`
+  Shows current verify/self-test progress.
+- `/petrecall verify cancel`
+  Stops the active verify/self-test run.
 
 ## How It Works
 
@@ -71,15 +85,18 @@ All commands require admin/operator permission.
 
 - Loaded pets are teleported to a safe spot near the owner.
 - Unloaded pets are reconstructed from stored entity data and moved without loading the source chunk into active simulation.
-- Placement prefers safe walkable positions with line of sight near the player.
+- Placement prefers safe walkable positions near the player.
+- Short grass is considered valid empty space, while water, fluids, and leaves are rejected.
 - If no valid safe spot exists, recall fails instead of spawning the pet into a bad location.
+- Pets are never recalled across dimensions.
 
 ### Automatic Recall
 
 - Automatic recall only targets unloaded pets.
 - Pets must belong to the player, be in the same dimension, and not be sitting.
-- Automatic checks happen after join, respawn, world change, chunk movement, and large travel events.
+- Automatic checks happen after join, respawn, world change, chunk movement, landing, and large travel events.
 - Automatic runs are throttled and batched so the server does not spam recall work every tick.
+- Join uses a short warmup and can do an owner-only loaded-pet repair scan when the index is empty.
 
 ### Pet Detection
 
@@ -92,6 +109,12 @@ All commands require admin/operator permission.
 - The server stores indexed pet records in persistent world data.
 - When a record points to a pet that can no longer be found, the mod quarantines retries with backoff.
 - After three consecutive misses, the stale record is removed automatically.
+
+### Verification And Debugging
+
+- Built-in verify commands can exercise loaded recall, unloaded recall, sitting-pet skips, ownership protection, safe-spot rules, auto-recall speed, batch recall, and stale-record cleanup.
+- `stats` commands expose indexed/runtime counters for live debugging.
+- Extra file tracing is available with `-Dnolostpets.debug=true`.
 
 ## Compatibility
 
@@ -143,6 +166,10 @@ Many do, as long as they behave like companion pets and expose normal owner/sitt
 
 No. Sitting pets are skipped on purpose.
 
+### Does it teleport pets between dimensions?
+
+No. Cross-dimension recall is intentionally blocked.
+
 ### Does it support horses or other mounts?
 
 No. Mount-style tamed mobs are intentionally excluded.
@@ -182,13 +209,22 @@ Windows helper scripts are included for all supported versions:
 .\run-1.21.9.ps1
 .\run-1.21.10.ps1
 .\run-1.21.11.ps1
+.\verify-all.ps1
 ```
 
 All test clients share the same runtime data in `run/shared`, including worlds, config, and `options.txt`, while still launching different Minecraft versions.
 
+`verify-all.ps1` runs the built-in `verify singleplayer` and `verify multiplayer` command-path suites headlessly across `1.21.8` through `1.21.11`, sequentially, and writes per-version logs to `build/tmp/verify-all/`.
+
 ## Debug Logging
 
-NoLostPets now writes a dedicated trace file at `logs/NoLostPets-debug.log` inside the current game or server directory.
+NoLostPets can write a dedicated trace file at `logs/NoLostPets-debug.log` inside the current game or server directory.
+
+By default this trace is enabled in development environments. For normal server runs, enable it explicitly with:
+
+```text
+-Dnolostpets.debug=true
+```
 
 For local multi-version runs in this repo, the file is version-specific:
 
@@ -206,4 +242,4 @@ For local multi-version runs in this repo, the file is version-specific:
 
 ## License
 
-All rights reserved.
+This project is licensed under `GPL-3.0-only`. See [LICENSE](LICENSE).

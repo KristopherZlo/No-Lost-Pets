@@ -29,13 +29,13 @@ These notes are based on official Fabric documentation and official Fabric metad
 
 | Minecraft | Yarn | Loader | Fabric API | Status in this repo |
 | --- | --- | --- | --- | --- |
-| `1.21.8` | `1.21.8+build.1` | `0.19.1` | `0.136.1+1.21.8` | `compileJava` passes, `remapJar` passes |
-| `1.21.9` | `1.21.9+build.1` | `0.19.1` | `0.134.1+1.21.9` | `compileJava` passes, `remapJar` passes |
-| `1.21.10` | `1.21.10+build.3` | `0.19.1` | `0.138.4+1.21.10` | `compileJava` passes, `remapJar` passes |
-| `1.21.11` | `1.21.11+build.4` | `0.19.1` | `0.141.3+1.21.11` | `compileJava` passes, `remapJar` passes |
-| `26.1` | none | `0.19.1` | `0.145.1+26.1` | blocked on Yarn -> Mojang migration |
-| `26.1.1` | none | `0.19.1` | `0.145.4+26.1.1` | blocked on Yarn -> Mojang migration |
-| `26.1.2` | none | `0.19.1` | `0.145.4+26.1.2` | blocked on Yarn -> Mojang migration |
+| `1.21.8` | `1.21.8+build.1` | `0.18.2` | `0.136.1+1.21.8` | `compileJava` passes, `remapJar` passes |
+| `1.21.9` | `1.21.9+build.1` | `0.18.2` | `0.134.1+1.21.9` | `compileJava` passes, `remapJar` passes |
+| `1.21.10` | `1.21.10+build.3` | `0.18.2` | `0.138.4+1.21.10` | `compileJava` passes, `remapJar` passes |
+| `1.21.11` | `1.21.11+build.4` | `0.18.2` | `0.141.3+1.21.11` | `compileJava` passes, `remapJar` passes |
+| `26.1` | none | `0.18.2` | `0.145.1+26.1` | blocked on Yarn -> Mojang migration |
+| `26.1.1` | none | `0.18.2` | `0.145.4+26.1.1` | blocked on Yarn -> Mojang migration |
+| `26.1.2` | none | `0.18.2` | `0.145.4+26.1.2` | blocked on Yarn -> Mojang migration |
 
 ## Current conclusion
 

@@ -7,7 +7,7 @@
 ![Minecraft](https://img.shields.io/badge/Minecraft-1.21.8--1.21.11-5E7C16?style=for-the-badge)
 ![Loader](https://img.shields.io/badge/Loader-Fabric-DBD0B4?style=for-the-badge)
 ![Environment](https://img.shields.io/badge/Environment-Server--Side-1F6FEB?style=for-the-badge)
-![License](https://img.shields.io/badge/License-All--Rights--Reserved-BD561D?style=for-the-badge)
+![License](https://img.shields.io/badge/License-GPL--3.0-2EA043?style=for-the-badge)
 
 ---
 
@@ -43,12 +43,15 @@ If the real problem is "my pet is lost somewhere outside simulation distance", t
 * Recalls pets from unloaded chunks without loading the source chunk
 * Recalls already loaded pets too
 * Uses safe vanilla-style placement near the player
+* Allows short grass as empty space but avoids water, fluids, and leaves
 * Skips sitting pets
-* Automatic recall checks on join, respawn, dimension change, and large movement
+* Same-dimension only, with ownership checks for every recall path
+* Automatic recall checks on join, respawn, dimension change, chunk movement, landing, and large movement
 * Works on dedicated servers
 * Server-side only on dedicated servers
 * Supports vanilla tameables and many modded companion pets
 * Cleans up stale pet records after repeated misses
+* Includes admin stats, rescan, and built-in verify/self-test commands
 * One universal jar for Minecraft `1.21.8 - 1.21.11`
 
 ---
@@ -61,6 +64,10 @@ Admin/operator commands:
 * `/petrecall rescan <player>`
 * `/petrecall stats`
 * `/petrecall stats <player>`
+* `/petrecall verify singleplayer`
+* `/petrecall verify multiplayer <otherPlayer>`
+* `/petrecall verify status`
+* `/petrecall verify cancel`
 
 ---
 
@@ -132,6 +139,12 @@ No. Sitting pets are skipped.
 
 ---
 
+### Does it teleport pets between dimensions?
+
+No. Cross-dimension recall is intentionally blocked.
+
+---
+
 ### Does it support horses or mounts?
 
 No. Mount-style tamed mobs are intentionally excluded.
@@ -143,4 +156,4 @@ No. Mount-style tamed mobs are intentionally excluded.
 * Supports Minecraft `1.21.8 - 1.21.11`
 * Fabric only
 * Universal jar across all supported `1.21.x` versions
-* All rights reserved
+* GPL-3.0-only
