@@ -1,13 +1,15 @@
 package com.creas.petrecall.util;
 
 import com.mojang.authlib.GameProfile;
-import java.lang.reflect.Method;
 import java.lang.reflect.Field;
+import java.lang.reflect.Method;
+import java.lang.reflect.Modifier;
 import java.lang.reflect.RecordComponent;
 import java.util.Locale;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.function.Supplier;
+import net.fabricmc.loader.api.FabricLoader;
 import net.minecraft.entity.Entity;
 import net.minecraft.nbt.NbtCompound;
 import net.minecraft.server.command.ServerCommandSource;
@@ -15,6 +17,7 @@ import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.network.ServerPlayerEntity;
 import net.minecraft.server.world.ServerWorld;
 import net.minecraft.util.math.ChunkPos;
+import net.minecraft.world.World;
 import net.minecraft.world.storage.EntityChunkDataAccess;
 import it.unimi.dsi.fastutil.longs.LongSet;
 import org.jetbrains.annotations.Nullable;
@@ -25,23 +28,20 @@ public final class VersionCompat {
     private static final @Nullable Method GAME_PROFILE_ID = findMethod(GameProfile.class, "id");
     private static final @Nullable Method GAME_PROFILE_GET_NAME = findMethod(GameProfile.class, "getName");
     private static final @Nullable Method GAME_PROFILE_NAME = findMethod(GameProfile.class, "name");
-    private static final @Nullable Method ENTITY_GET_ENTITY_WORLD = findMethod(Entity.class, "getEntityWorld");
-    private static final @Nullable Method ENTITY_GET_WORLD = findMethod(Entity.class, "getWorld");
-    private static final @Nullable Field ENTITY_CHUNK_STORAGE = findField(EntityChunkDataAccess.class, "storage");
-    private static final @Nullable Field ENTITY_CHUNK_EMPTY_CHUNKS = findField(EntityChunkDataAccess.class, "emptyChunks");
+    private static final @Nullable Method ENTITY_WORLD_METHOD = findEntityWorldMethod();
+    private static final @Nullable Field ENTITY_WORLD_FIELD = findEntityWorldField();
+    private static final @Nullable Field ENTITY_CHUNK_STORAGE = findEntityChunkStorageField();
+    private static final @Nullable Field ENTITY_CHUNK_EMPTY_CHUNKS = findEntityChunkEmptyChunksField();
     private VersionCompat() {
     }
 
     @Nullable
     public static ServerWorld getServerWorld(Entity entity) {
-        Object world = invokeNoArgs(entity, ENTITY_GET_ENTITY_WORLD);
+        Object world = invokeNoArgs(entity, ENTITY_WORLD_METHOD);
         if (world == null) {
-            world = invokeNoArgs(entity, ENTITY_GET_WORLD);
+            world = readField(entity, ENTITY_WORLD_FIELD);
         }
-        if (world instanceof ServerWorld serverWorld) {
-            return serverWorld;
-        }
-        return null;
+        return world instanceof ServerWorld serverWorld ? serverWorld : null;
     }
 
     @Nullable
@@ -92,29 +92,25 @@ public final class VersionCompat {
     }
 
     public static CompletableFuture<Void> clearChunkData(Object storage, ChunkPos chunkPos) {
-        Method supplierSet = findMethod(storage.getClass(), "set", ChunkPos.class, Supplier.class);
-        if (supplierSet != null) {
-            return invokeStorage(supplierSet, storage, chunkPos, EMPTY_NBT_SUPPLIER);
+        Method supplierWrite = findStorageMethod(storage.getClass(), ChunkPos.class, Supplier.class);
+        if (supplierWrite != null) {
+            return invokeStorage(supplierWrite, storage, chunkPos, EMPTY_NBT_SUPPLIER);
         }
-        Method directSet = findMethod(storage.getClass(), "set", ChunkPos.class, NbtCompound.class);
-        if (directSet != null) {
-            return invokeStorage(directSet, storage, chunkPos, (Object) null);
+        Method directNbtWrite = findStorageMethod(storage.getClass(), ChunkPos.class, NbtCompound.class);
+        if (directNbtWrite != null) {
+            return invokeStorage(directNbtWrite, storage, chunkPos, (NbtCompound) null);
         }
         throw new IllegalStateException("Unsupported chunk storage clear signature: " + storage.getClass().getName());
     }
 
     public static CompletableFuture<Void> writeChunkData(Object storage, ChunkPos chunkPos, NbtCompound chunkNbt) {
-        Method directSetNbt = findMethod(storage.getClass(), "setNbt", ChunkPos.class, NbtCompound.class);
-        if (directSetNbt != null) {
-            return invokeStorage(directSetNbt, storage, chunkPos, chunkNbt);
+        Method directNbtWrite = findStorageMethod(storage.getClass(), ChunkPos.class, NbtCompound.class);
+        if (directNbtWrite != null) {
+            return invokeStorage(directNbtWrite, storage, chunkPos, chunkNbt);
         }
-        Method supplierSetNbt = findMethod(storage.getClass(), "setNbt", ChunkPos.class, Supplier.class);
-        if (supplierSetNbt != null) {
-            return invokeStorage(supplierSetNbt, storage, chunkPos, (Supplier<NbtCompound>) () -> chunkNbt);
-        }
-        Method directSet = findMethod(storage.getClass(), "set", ChunkPos.class, NbtCompound.class);
-        if (directSet != null) {
-            return invokeStorage(directSet, storage, chunkPos, chunkNbt);
+        Method supplierNbtWrite = findStorageMethod(storage.getClass(), ChunkPos.class, Supplier.class);
+        if (supplierNbtWrite != null) {
+            return invokeStorage(supplierNbtWrite, storage, chunkPos, (Supplier<NbtCompound>) () -> chunkNbt);
         }
         throw new IllegalStateException("Unsupported chunk storage write signature: " + storage.getClass().getName());
     }
@@ -129,6 +125,117 @@ public final class VersionCompat {
     }
 
     @Nullable
+    private static Method findEntityWorldMethod() {
+        String[] preferredNames = {"getEntityWorld", "getWorld"};
+        for (String name : preferredNames) {
+            Method method = findWorldMethodByName(name);
+            if (method != null) {
+                return method;
+            }
+        }
+
+        for (Method method : Entity.class.getMethods()) {
+            if (method.getParameterCount() == 0
+                    && World.class.isAssignableFrom(method.getReturnType())
+                    && !Modifier.isStatic(method.getModifiers())) {
+                return method;
+            }
+        }
+        return null;
+    }
+
+    @Nullable
+    private static Method findWorldMethodByName(String name) {
+        for (Method method : Entity.class.getMethods()) {
+            if (method.getName().equals(name)
+                    && method.getParameterCount() == 0
+                    && World.class.isAssignableFrom(method.getReturnType())
+                    && !Modifier.isStatic(method.getModifiers())) {
+                return method;
+            }
+        }
+        return null;
+    }
+
+    @Nullable
+    private static Field findEntityWorldField() {
+        Class<?> owner = Entity.class;
+        while (owner != null) {
+            for (Field field : owner.getDeclaredFields()) {
+                if (World.class.isAssignableFrom(field.getType()) && !Modifier.isStatic(field.getModifiers())) {
+                    field.setAccessible(true);
+                    return field;
+                }
+            }
+            owner = owner.getSuperclass();
+        }
+        return null;
+    }
+
+    @Nullable
+    private static Field findEntityChunkStorageField() {
+        Field mapped = findMappedMinecraftField(
+                EntityChunkDataAccess.class,
+                "net.minecraft.world.storage.EntityChunkDataAccess",
+                "storage",
+                "Lnet/minecraft/world/storage/VersionedChunkStorage;",
+                "Lnet/minecraft/world/storage/ChunkPosKeyedStorage;"
+        );
+        if (mapped != null) {
+            return mapped;
+        }
+
+        for (Field field : EntityChunkDataAccess.class.getDeclaredFields()) {
+            if (Modifier.isStatic(field.getModifiers())) {
+                continue;
+            }
+            Class<?> fieldType = field.getType();
+            if (findStorageMethod(fieldType, ChunkPos.class, Supplier.class) != null
+                    || findStorageMethod(fieldType, ChunkPos.class, NbtCompound.class) != null) {
+                field.setAccessible(true);
+                return field;
+            }
+        }
+        return null;
+    }
+
+    @Nullable
+    private static Field findEntityChunkEmptyChunksField() {
+        Field mapped = findMappedMinecraftField(
+                EntityChunkDataAccess.class,
+                "net.minecraft.world.storage.EntityChunkDataAccess",
+                "emptyChunks",
+                "Lit/unimi/dsi/fastutil/longs/LongSet;"
+        );
+        return mapped != null ? mapped : findFieldByType(EntityChunkDataAccess.class, LongSet.class);
+    }
+
+    @Nullable
+    private static Field findMappedMinecraftField(Class<?> owner, String ownerNamedName, String namedField, String... descriptors) {
+        Field direct = findField(owner, namedField);
+        if (direct != null) {
+            return direct;
+        }
+
+        for (String descriptor : descriptors) {
+            try {
+                String runtimeName = FabricLoader.getInstance()
+                        .getMappingResolver()
+                        .mapFieldName("named", ownerNamedName, namedField, descriptor);
+                if (!runtimeName.equals(namedField)) {
+                    Field mapped = findField(owner, runtimeName);
+                    if (mapped != null) {
+                        return mapped;
+                    }
+                }
+            } catch (RuntimeException | LinkageError ignored) {
+                // Fabric mappings may be unavailable in isolated unit tests.
+            }
+        }
+        return null;
+    }
+
+    @Nullable
     private static Field findField(Class<?> owner, String name) {
         try {
             Field field = owner.getDeclaredField(name);
@@ -137,6 +244,33 @@ public final class VersionCompat {
         } catch (ReflectiveOperationException | RuntimeException ignored) {
             return null;
         }
+    }
+
+    @Nullable
+    private static Field findFieldByType(Class<?> owner, Class<?> type) {
+        for (Field field : owner.getDeclaredFields()) {
+            if (type.isAssignableFrom(field.getType()) && !Modifier.isStatic(field.getModifiers())) {
+                field.setAccessible(true);
+                return field;
+            }
+        }
+        return null;
+    }
+
+    @Nullable
+    private static Method findStorageMethod(Class<?> owner, Class<?> firstParameterType, Class<?> secondParameterType) {
+        for (Method method : owner.getMethods()) {
+            if (!CompletableFuture.class.isAssignableFrom(method.getReturnType())) {
+                continue;
+            }
+            Class<?>[] parameterTypes = method.getParameterTypes();
+            if (parameterTypes.length == 2
+                    && parameterTypes[0] == firstParameterType
+                    && parameterTypes[1] == secondParameterType) {
+                return method;
+            }
+        }
+        return null;
     }
 
     @Nullable
