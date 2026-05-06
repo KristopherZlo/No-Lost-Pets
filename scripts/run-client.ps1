@@ -2,8 +2,16 @@ param(
     [Parameter(Mandatory = $true)]
     [string]$Version,
     [string]$JavaHome,
+    [string]$ModVersion,
+    [string]$RunName,
     [string]$Username = "NoLostPetsTest",
     [string]$Uuid,
+    [string]$LanSmokeRole,
+    [string]$LanSmokeDir,
+    [string]$LanSmokeWorld,
+    [int]$LanSmokePort = 0,
+    [string]$LanSmokeHostName,
+    [string]$LanSmokePeerName,
     [switch]$NoDaemon,
     [Parameter(ValueFromRemainingArguments = $true)]
     [string[]]$GradleArgs
@@ -16,21 +24,25 @@ $matrix = @{
         yarn = "1.21.8+build.1"
         loader = "0.18.2"
         fabric_api = "0.136.1+1.21.8"
+        mod_version = "1.1.1"
     }
     "1.21.9" = @{
         yarn = "1.21.9+build.1"
         loader = "0.18.2"
         fabric_api = "0.134.1+1.21.9"
+        mod_version = "1.1.1"
     }
     "1.21.10" = @{
         yarn = "1.21.10+build.3"
         loader = "0.18.2"
         fabric_api = "0.138.4+1.21.10"
+        mod_version = "1.1.1"
     }
     "1.21.11" = @{
         yarn = "1.21.11+build.4"
         loader = "0.18.2"
         fabric_api = "0.141.3+1.21.11"
+        mod_version = "1.1.1"
     }
 }
 
@@ -172,10 +184,12 @@ $resolvedJavaHome = Resolve-JavaHome -PreferredJavaHome $JavaHome
 $target = $matrix[$Version]
 $repoRoot = Split-Path -Parent $PSScriptRoot
 $gradle = Join-Path $repoRoot "gradlew.bat"
-$runDir = "run\$Version"
+$effectiveRunName = if ($RunName) { $RunName } else { $Version }
+$runDir = "run\$effectiveRunName"
 $effectiveUuid = if ($Uuid) { $Uuid } else { $null }
+$effectiveModVersion = if ($ModVersion) { $ModVersion } else { $target.mod_version }
 
-Initialize-SharedRuntime -RepoRoot $repoRoot -Version $Version
+Initialize-SharedRuntime -RepoRoot $repoRoot -Version $effectiveRunName
 
 $env:JAVA_HOME = $resolvedJavaHome
 $commandArgs = @(
@@ -184,12 +198,32 @@ $commandArgs = @(
     "-Pyarn_mappings=$($target.yarn)"
     "-Ploader_version=$($target.loader)"
     "-Pfabric_version=$($target.fabric_api)"
+    "-Pmod_version=$effectiveModVersion"
     "-Ploom_run_dir=$runDir"
     "-Ploom_test_username=$Username"
 )
 
 if ($effectiveUuid) {
     $commandArgs += "-Ploom_test_uuid=$effectiveUuid"
+}
+
+if ($LanSmokeRole) {
+    $commandArgs += "-Pnolostpets_lan_smoke_role=$LanSmokeRole"
+}
+if ($LanSmokeDir) {
+    $commandArgs += "-Pnolostpets_lan_smoke_dir=$LanSmokeDir"
+}
+if ($LanSmokeWorld) {
+    $commandArgs += "-Pnolostpets_lan_smoke_world=$LanSmokeWorld"
+}
+if ($LanSmokePort -gt 0) {
+    $commandArgs += "-Pnolostpets_lan_smoke_port=$LanSmokePort"
+}
+if ($LanSmokeHostName) {
+    $commandArgs += "-Pnolostpets_lan_smoke_host_name=$LanSmokeHostName"
+}
+if ($LanSmokePeerName) {
+    $commandArgs += "-Pnolostpets_lan_smoke_peer_name=$LanSmokePeerName"
 }
 
 if ($NoDaemon) {

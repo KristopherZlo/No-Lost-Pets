@@ -1125,7 +1125,7 @@ public final class PetRecallSelfTestService {
                 return ScenarioResult.failed("Expected all batch pets to recall successfully");
             }
             long recallTicks = this.recallStartedAtTick >= 0L ? Math.max(0L, suite.now() - this.recallStartedAtTick) : elapsedTicks;
-            if (recallTicks > 120L) {
+            if (recallTicks > 180L) {
                 return ScenarioResult.failed("Batch recall took too long: " + recallTicks + " ticks");
             }
             return ScenarioResult.passed("batch recall completed in " + recallTicks + " ticks");

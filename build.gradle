@@ -25,6 +25,14 @@ def loomTestUsername = (findProperty("loom_test_username") ?: "NoLostPetsTest").
 def loomTestUuid = (findProperty("loom_test_uuid")
         ?: UUID.nameUUIDFromBytes(("OfflinePlayer:" + loomTestUsername).getBytes(StandardCharsets.UTF_8)).toString())
         .toString()
+def lanSmokeVmProperties = [
+        "nolostpets.lanSmoke.role"    : findProperty("nolostpets_lan_smoke_role"),
+        "nolostpets.lanSmoke.dir"     : findProperty("nolostpets_lan_smoke_dir"),
+        "nolostpets.lanSmoke.world"   : findProperty("nolostpets_lan_smoke_world"),
+        "nolostpets.lanSmoke.port"    : findProperty("nolostpets_lan_smoke_port"),
+        "nolostpets.lanSmoke.hostName": findProperty("nolostpets_lan_smoke_host_name"),
+        "nolostpets.lanSmoke.peerName": findProperty("nolostpets_lan_smoke_peer_name")
+].findAll { key, value -> value != null && value.toString().trim() }
 
 base {
     archivesName = project.archives_base_name
@@ -45,6 +53,9 @@ loom {
 
     runs.named("client") {
         programArgs "--username", loomTestUsername, "--uuid", loomTestUuid
+        lanSmokeVmProperties.each { key, value ->
+            vmArg "-D${key}=${value}"
+        }
     }
 }
 

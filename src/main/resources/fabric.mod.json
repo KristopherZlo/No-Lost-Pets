@@ -14,6 +14,9 @@
   "entrypoints": {
     "main": [
       "com.creas.petrecall.PetRecallMod"
+    ],
+    "client": [
+      "com.creas.petrecall.smoke.LanSmokeClient"
     ]
   },
   "mixins": [

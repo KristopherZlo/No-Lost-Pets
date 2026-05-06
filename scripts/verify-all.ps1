@@ -1,36 +1,37 @@
 param(
+    [string[]]$Versions = @("1.21.8", "1.21.9", "1.21.10", "1.21.11"),
     [string]$JavaHome,
     [int]$TimeoutSeconds = 900
 )
 
 $ErrorActionPreference = "Stop"
 
-$matrix = @(
-    @{
-        version = "1.21.8"
+$matrix = @{
+    "1.21.8" = @{
         yarn = "1.21.8+build.1"
         loader = "0.18.2"
         fabric_api = "0.136.1+1.21.8"
+        mod_version = "1.1.1"
     }
-    @{
-        version = "1.21.9"
+    "1.21.9" = @{
         yarn = "1.21.9+build.1"
         loader = "0.18.2"
         fabric_api = "0.134.1+1.21.9"
+        mod_version = "1.1.1"
     }
-    @{
-        version = "1.21.10"
+    "1.21.10" = @{
         yarn = "1.21.10+build.3"
         loader = "0.18.2"
         fabric_api = "0.138.4+1.21.10"
+        mod_version = "1.1.1"
     }
-    @{
-        version = "1.21.11"
+    "1.21.11" = @{
         yarn = "1.21.11+build.4"
         loader = "0.18.2"
         fabric_api = "0.141.3+1.21.11"
+        mod_version = "1.1.1"
     }
-)
+}
 
 function Resolve-JavaHome {
     param([string]$PreferredJavaHome)
@@ -140,7 +141,7 @@ function Invoke-VersionVerify {
 
     $scriptLines = @(
         '$ErrorActionPreference = ''Stop'''
-        ('& ''{0}'' ''runGameTest'' ''--no-daemon'' ''-Pminecraft_version={1}'' ''-Pyarn_mappings={2}'' ''-Ploader_version={3}'' ''-Pfabric_version={4}''' -f $GradlePath, $Target.version, $Target.yarn, $Target.loader, $Target.fabric_api)
+        ('& ''{0}'' ''runGameTest'' ''--no-daemon'' ''-Pminecraft_version={1}'' ''-Pyarn_mappings={2}'' ''-Ploader_version={3}'' ''-Pfabric_version={4}'' ''-Pmod_version={5}''' -f $GradlePath, $Target.version, $Target.yarn, $Target.loader, $Target.fabric_api, $Target.mod_version)
         'exit $LASTEXITCODE'
     )
     [System.IO.File]::WriteAllLines($runnerScript, $scriptLines)
@@ -167,32 +168,48 @@ function Invoke-VersionVerify {
     $exitCode = 0
 
     try {
-        $completed = $process.WaitForExit($TimeoutSeconds * 1000)
-        if (-not $completed) {
-            $status = "timeout"
-            $exitCode = -1
-            Stop-ProcessTree -RootIds @($process.Id)
-        } else {
-            $process.WaitForExit()
-            $exitCode = $process.ExitCode
+        $finished = $false
+        while (-not $finished) {
+            if (((Get-Date) - $startedAt).TotalSeconds -ge $TimeoutSeconds) {
+                $status = "timeout"
+                $exitCode = -1
+                Stop-ProcessTree -RootIds @($process.Id)
+                break
+            }
+
             $stdoutText = if (Test-Path -LiteralPath $stdoutLog) { Get-Content -LiteralPath $stdoutLog -Raw } else { "" }
             $stderrText = if (Test-Path -LiteralPath $stderrLog) { Get-Content -LiteralPath $stderrLog -Raw } else { "" }
             $hasBuildSuccess = $stdoutText -match "BUILD SUCCESSFUL"
             $hasBuildFailure = $stdoutText -match "BUILD FAILED" -or $stderrText -match "BUILD FAILED"
+            $hasGameTestSuccess = $stdoutText -match "All \d+ required tests passed"
+            $hasGameTestFailure = $stdoutText -match "\d+ required tests failed"
 
-            if ($hasBuildSuccess -and -not $hasBuildFailure) {
+            if (($hasGameTestSuccess -or $hasBuildSuccess) -and -not $hasGameTestFailure -and -not $hasBuildFailure) {
                 $status = "passed"
-                if ([string]::IsNullOrWhiteSpace([string]$exitCode)) {
-                    $exitCode = 0
-                }
-            } elseif ($hasBuildFailure) {
-                $status = "failed"
-                if ([string]::IsNullOrWhiteSpace([string]$exitCode)) {
-                    $exitCode = 1
-                }
-            } elseif ($exitCode -ne 0) {
-                $status = "failed"
+                $exitCode = 0
+                Stop-ProcessTree -RootIds @($process.Id)
+                break
             }
+
+            if ($hasGameTestFailure -or $hasBuildFailure) {
+                $status = "failed"
+                $exitCode = 1
+                Stop-ProcessTree -RootIds @($process.Id)
+                break
+            }
+
+            if ($process.HasExited) {
+                $process.WaitForExit()
+                $exitCode = $process.ExitCode
+                if ($exitCode -ne 0) {
+                    $status = "failed"
+                } else {
+                    $status = "passed"
+                }
+                break
+            }
+
+            Start-Sleep -Seconds 1
         }
     } catch {
         $status = "timeout"
@@ -229,9 +246,18 @@ if ($staleIds.Count -gt 0) {
 }
 
 $results = @()
+$targets = @()
+foreach ($version in $Versions) {
+    if (-not $matrix.ContainsKey($version)) {
+        throw "Unsupported target '$version'. Supported targets: $($matrix.Keys -join ', ')"
+    }
+    $target = $matrix[$version]
+    $target["version"] = $version
+    $targets += $target
+}
 
 try {
-    foreach ($target in $matrix) {
+    foreach ($target in $targets) {
         Write-Host ("Running verify suites on " + $target.version + "...")
         $result = Invoke-VersionVerify `
             -Target $target `
