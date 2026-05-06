@@ -216,6 +216,23 @@ All test clients share the same runtime data in `run/shared`, including worlds, 
 
 `verify-all.ps1` runs the built-in `verify singleplayer` and `verify multiplayer` command-path suites headlessly across `1.21.8` through `1.21.11`, sequentially, and writes per-version logs to `build/tmp/verify-all/`.
 
+Release builds use `scripts/build-1.21x.ps1`. Each Minecraft target has its own `mod_version` in the script matrix, so hotfix versions can differ between game versions. By default the build is gated by two smoke checks per target before a jar is produced:
+
+```powershell
+.\scripts\smoke-client.ps1 -Version 1.21.11
+.\scripts\verify-all.ps1 -Versions 1.21.11
+```
+
+The client smoke starts `runClient` and waits for Minecraft, LWJGL, and NoLostPets to initialize. The GameTest smoke starts the Minecraft GameTest runtime and runs the command-path self-test suite.
+
+Two-client LAN smoke is also available:
+
+```powershell
+.\scripts\smoke-lan.ps1 -Version 1.21.11 -WorldName Testing
+```
+
+It launches two Minecraft clients with different usernames, loads the named local world on the host, opens it to LAN, connects the second client to `127.0.0.1`, and runs the multiplayer verify suite. Release builds can opt into this heavier check with `.\scripts\build-1.21x.ps1 -RunLanSmoke`; it requires the named world to exist under `run/shared/saves/`.
+
 ## Debug Logging
 
 NoLostPets can write a dedicated trace file at `logs/NoLostPets-debug.log` inside the current game or server directory.
