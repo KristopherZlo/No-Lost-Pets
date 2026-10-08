@@ -11,10 +11,10 @@
     ]
   },
   "depends": {
-    "fabricloader": ">=0.18.2",
+    "fabricloader": ">=${loader_version}",
     "fabric-gametest-api-v1": "*",
-    "minecraft": "*",
-    "java": ">=21",
+    "minecraft": "${minecraft_version}",
+    "java": ">=25",
     "pet_recall": "*"
   }
 }
