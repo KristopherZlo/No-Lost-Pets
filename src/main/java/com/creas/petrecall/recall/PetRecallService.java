@@ -19,20 +19,19 @@ import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 import java.util.function.Consumer;
-import net.minecraft.block.BlockState;
-import net.minecraft.block.LeavesBlock;
-import net.minecraft.entity.Entity;
-import net.minecraft.entity.mob.MobEntity;
+import net.minecraft.core.BlockPos;
+import net.minecraft.core.Direction;
 import net.minecraft.server.MinecraftServer;
-import net.minecraft.server.network.ServerPlayerEntity;
-import net.minecraft.server.world.ServerWorld;
-import net.minecraft.util.math.BlockPos;
-import net.minecraft.util.math.Box;
-import net.minecraft.util.math.ChunkPos;
-import net.minecraft.util.math.Direction;
-import net.minecraft.util.math.Vec3d;
-import net.minecraft.util.shape.VoxelShape;
-import net.minecraft.world.TeleportTarget;
+import net.minecraft.server.level.ServerLevel;
+import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.world.entity.Entity;
+import net.minecraft.world.entity.Mob;
+import net.minecraft.world.level.block.LeavesBlock;
+import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.world.level.portal.TeleportTransition;
+import net.minecraft.world.phys.AABB;
+import net.minecraft.world.phys.Vec3;
+import net.minecraft.world.phys.shapes.VoxelShape;
 import org.jetbrains.annotations.Nullable;
 
 public final class PetRecallService {
@@ -92,12 +91,12 @@ public final class PetRecallService {
         );
     }
 
-    public boolean recallAllForPlayerAsync(ServerPlayerEntity player, Consumer<RecallSummary> onComplete) {
+    public boolean recallAllForPlayerAsync(ServerPlayer player, Consumer<RecallSummary> onComplete) {
         return this.recallForPlayerAsync(player, onComplete, true, true, null, true);
     }
 
     public boolean recallSpecificPetsForPlayerAsync(
-            ServerPlayerEntity player,
+            ServerPlayer player,
             List<PetRecord> records,
             boolean includeLoadedPets,
             Consumer<RecallSummary> onComplete
@@ -108,18 +107,18 @@ public final class PetRecallService {
         return this.recallForPlayerAsync(player, onComplete, includeLoadedPets, false, records, true);
     }
 
-    public boolean recallUnloadedForPlayerAsyncSilent(ServerPlayerEntity player) {
+    public boolean recallUnloadedForPlayerAsyncSilent(ServerPlayer player) {
         return this.recallUnloadedForPlayerAsyncSilent(player, null, summary -> {
         });
     }
 
-    public boolean recallUnloadedForPlayerAsyncSilent(ServerPlayerEntity player, List<PetRecord> candidateRecords) {
+    public boolean recallUnloadedForPlayerAsyncSilent(ServerPlayer player, List<PetRecord> candidateRecords) {
         return this.recallUnloadedForPlayerAsyncSilent(player, candidateRecords, summary -> {
         });
     }
 
     public boolean recallUnloadedForPlayerAsyncSilent(
-            ServerPlayerEntity player,
+            ServerPlayer player,
             @Nullable List<PetRecord> candidateRecords,
             Consumer<RecallSummary> onComplete
     ) {
@@ -130,7 +129,7 @@ public final class PetRecallService {
     }
 
     private boolean recallForPlayerAsync(
-            ServerPlayerEntity player,
+            ServerPlayer player,
             Consumer<RecallSummary> onComplete,
             boolean includeLoadedPets,
             boolean rescanIfEmpty,
@@ -149,7 +148,7 @@ public final class PetRecallService {
             return false;
         }
 
-        UUID playerUuid = player.getUuid();
+        UUID playerUuid = player.getUUID();
         synchronized (this.activeRecalls) {
             if (!this.activeRecalls.add(playerUuid)) {
                 DebugTrace.log("recall", "Rejecting recall because player already has active recall %s", DebugTrace.describePlayer(player));
@@ -197,7 +196,7 @@ public final class PetRecallService {
         return true;
     }
 
-    private void sortRecordsForRecall(ServerPlayerEntity player, List<PetRecord> records, boolean includeLoadedPets) {
+    private void sortRecordsForRecall(ServerPlayer player, List<PetRecord> records, boolean includeLoadedPets) {
         String playerDimensionId = VersionCompat.getDimensionId(player);
         Map<UUID, Boolean> loadedCache = new HashMap<>(Math.max(16, records.size()));
         Comparator<PetRecord> comparator = (a, b) -> {
@@ -232,12 +231,12 @@ public final class PetRecallService {
         records.sort(comparator);
     }
 
-    public int rescanLoadedForPlayer(ServerPlayerEntity player) {
+    public int rescanLoadedForPlayer(ServerPlayer player) {
         MinecraftServer server = VersionCompat.getServer(player);
         if (server == null) {
             return 0;
         }
-        return this.tracker.rescanLoadedPetsForOwner(server, player.getUuid());
+        return this.tracker.rescanLoadedPetsForOwner(server, player.getUUID());
     }
 
     public void onServerTick(MinecraftServer server) {
@@ -288,7 +287,7 @@ public final class PetRecallService {
                         outcome = RecallOutcome.SKIPPED;
                     } else {
                         var key = record.dimensionKey();
-                        ServerWorld world = key == null ? null : runner.server.getWorld(key);
+                        ServerLevel world = key == null ? null : runner.server.getLevel(key);
                         if (world != null) {
                             this.beginUnloadedRecall(runner, record, world);
                             return;
@@ -326,8 +325,8 @@ public final class PetRecallService {
             return;
         }
         runner.finished = true;
-        this.runners.remove(runner.player.getUuid(), runner);
-        this.activeRecalls.remove(runner.player.getUuid());
+        this.runners.remove(runner.player.getUUID(), runner);
+        this.activeRecalls.remove(runner.player.getUUID());
         this.notifyComplete(runner.onComplete, runner.summary);
     }
 
@@ -339,7 +338,7 @@ public final class PetRecallService {
         }
     }
 
-    private void beginUnloadedRecall(RecallRunner runner, PetRecord record, ServerWorld sourceWorld) {
+    private void beginUnloadedRecall(RecallRunner runner, PetRecord record, ServerLevel sourceWorld) {
         ChunkOperationKey key = new ChunkOperationKey(record.dimensionId(), record.chunkPosLong());
         this.chunkScheduler.enqueue(key, new ChunkRecallScheduler.Operation() {
             @Override
@@ -412,7 +411,7 @@ public final class PetRecallService {
         }
     }
 
-    private RecallOutcome recallLoadedPet(ServerPlayerEntity player, ServerWorld targetWorld, Entity entity, RecallSummary summary) {
+    private RecallOutcome recallLoadedPet(ServerPlayer player, ServerLevel targetWorld, Entity entity, RecallSummary summary) {
         if (!canContinueRecallForPlayer(player)) {
             DebugTrace.log("recall", "Loaded recall rejected because player cannot continue %s", DebugTrace.describePlayer(player));
             return RecallOutcome.FAILED;
@@ -421,8 +420,8 @@ public final class PetRecallService {
         if (!VersionCompat.getDimensionId(player).equals(VersionCompat.getDimensionId(entity))) {
             DebugTrace.log("recall", "Loaded recall skipped because pet is in another dimension %s playerDim=%s entityDim=%s",
                     DebugTrace.describeEntity(entity), VersionCompat.getDimensionId(player), VersionCompat.getDimensionId(entity));
-            this.onPetObserved(entity.getUuid());
-            addCrossDimensionSkipMessage(summary, entity.getUuid());
+            this.onPetObserved(entity.getUUID());
+            addCrossDimensionSkipMessage(summary, entity.getUUID());
             return RecallOutcome.SKIPPED;
         }
 
@@ -431,47 +430,47 @@ public final class PetRecallService {
             DebugTrace.log("recall", "Loaded entity stopped qualifying as supported pet %s", DebugTrace.describeEntity(entity));
             MinecraftServer server = targetWorld.getServer();
             if (server != null) {
-                this.tracker.removeRecord(server, entity.getUuid());
-                this.onPetRemoved(entity.getUuid());
+                this.tracker.removeRecord(server, entity.getUUID());
+                this.onPetRemoved(entity.getUUID());
             }
-            summary.messages.add("Non-following tamed mob skipped " + entity.getUuid());
+            summary.messages.add("Non-following tamed mob skipped " + entity.getUUID());
             return RecallOutcome.SKIPPED;
         }
 
-        if (!ownedPet.ownerUuid().equals(player.getUuid())) {
+        if (!ownedPet.ownerUuid().equals(player.getUUID())) {
             this.tracker.upsertRecordFromEntity(targetWorld, entity);
-            DebugTrace.log("recall", "Loaded recall ownership mismatch entityOwner=%s player=%s %s", ownedPet.ownerUuid(), player.getUuid(), DebugTrace.describeEntity(entity));
-            summary.messages.add("Ownership mismatch for pet " + entity.getUuid());
+            DebugTrace.log("recall", "Loaded recall ownership mismatch entityOwner=%s player=%s %s", ownedPet.ownerUuid(), player.getUUID(), DebugTrace.describeEntity(entity));
+            summary.messages.add("Ownership mismatch for pet " + entity.getUUID());
             return RecallOutcome.FAILED;
         }
 
         if (ownedPet.sitting()) {
             this.tracker.upsertRecordFromEntity(targetWorld, entity);
             DebugTrace.log("recall", "Loaded recall skipped because pet is sitting %s", DebugTrace.describeEntity(entity));
-            this.onPetObserved(entity.getUuid());
-            summary.messages.add("Sitting pet skipped " + entity.getUuid());
+            this.onPetObserved(entity.getUUID());
+            summary.messages.add("Sitting pet skipped " + entity.getUUID());
             return RecallOutcome.SKIPPED;
         }
 
-        if (entity.hasVehicle() || entity.hasPassengers()) {
-            summary.messages.add("Mounted pet skipped " + entity.getUuid());
+        if (entity.isPassenger() || entity.isVehicle()) {
+            summary.messages.add("Mounted pet skipped " + entity.getUUID());
             return RecallOutcome.SKIPPED;
         }
 
         SafeRecallSpot safeSpot = findSafeRecallPosition(player, targetWorld, entity, summary);
         if (safeSpot == null) {
             DebugTrace.log("recall", "Loaded recall failed because no safe spot was found %s around %s", DebugTrace.describeEntity(entity), DebugTrace.describePlayer(player));
-            summary.messages.add("No safe spot near player for pet " + entity.getUuid());
+            summary.messages.add("No safe spot near player for pet " + entity.getUUID());
             return RecallOutcome.FAILED;
         }
 
-        Entity teleported = entity.teleportTo(new TeleportTarget(
+        Entity teleported = entity.teleport(new TeleportTransition(
                 targetWorld,
                 safeSpot.position(),
-                Vec3d.ZERO,
-                entity.getYaw(),
-                entity.getPitch(),
-                TeleportTarget.NO_OP
+                Vec3.ZERO,
+                entity.getYRot(),
+                entity.getXRot(),
+                TeleportTransition.DO_NOTHING
         ));
 
         if (teleported == null) {
@@ -482,7 +481,7 @@ public final class PetRecallService {
         DebugTrace.log("recall", "Loaded recall teleported pet successfully %s safeSpot=%s", DebugTrace.describeEntity(teleported), safeSpot.blockPos());
         reserveRecallSpot(summary, safeSpot);
         this.tracker.upsertRecordFromEntity(targetWorld, teleported);
-        this.onPetObserved(entity.getUuid());
+        this.onPetObserved(entity.getUUID());
         return RecallOutcome.RECALLED;
     }
 
@@ -517,7 +516,7 @@ public final class PetRecallService {
     }
 
     @Nullable
-    private RecallOutcome tryHandleLoadedIfPresent(ServerPlayerEntity player, UUID petUuid, RecallSummary summary, boolean allowLoadedRecall) {
+    private RecallOutcome tryHandleLoadedIfPresent(ServerPlayer player, UUID petUuid, RecallSummary summary, boolean allowLoadedRecall) {
         Entity loaded = this.tracker.getLoadedPet(petUuid);
         if (loaded == null) {
             return null;
@@ -533,7 +532,7 @@ public final class PetRecallService {
             return RecallOutcome.SKIPPED;
         }
 
-        ServerWorld targetWorld = VersionCompat.getServerWorld(player);
+        ServerLevel targetWorld = VersionCompat.getServerWorld(player);
         if (targetWorld == null) {
             return RecallOutcome.FAILED;
         }
@@ -555,20 +554,20 @@ public final class PetRecallService {
         }
     }
 
-    public static boolean isPlayerGroundedForRecall(ServerPlayerEntity player) {
+    public static boolean isPlayerGroundedForRecall(ServerPlayer player) {
         if (player.isRemoved() || !player.isAlive()) {
             return false;
         }
-        if (player.isOnGround()) {
+        if (player.onGround()) {
             return true;
         }
 
-        ServerWorld world = VersionCompat.getServerWorld(player);
+        ServerLevel world = VersionCompat.getServerWorld(player);
         if (world == null) {
             return false;
         }
 
-        Box box = player.getBoundingBox().expand(-0.05D, 0.0D, -0.05D);
+        AABB box = player.getBoundingBox().inflate(-0.05D, 0.0D, -0.05D);
         int minX = (int) Math.floor(box.minX);
         int maxX = (int) Math.floor(box.maxX);
         int minZ = (int) Math.floor(box.minZ);
@@ -587,22 +586,22 @@ public final class PetRecallService {
         return false;
     }
 
-    private static boolean canContinueRecallForPlayer(ServerPlayerEntity player) {
+    private static boolean canContinueRecallForPlayer(ServerPlayer player) {
         return !player.isRemoved() && isPlayerGroundedForRecall(player);
     }
 
     private static long getCurrentTick(MinecraftServer server) {
-        return server.getOverworld() == null ? 0L : server.getOverworld().getTime();
+        return server.overworld() == null ? 0L : server.overworld().getGameTime();
     }
 
     @Nullable
-    private static SafeRecallSpot findSafeRecallPosition(ServerPlayerEntity player, ServerWorld targetWorld, Entity pet, RecallSummary summary) {
-        if (!(pet instanceof MobEntity mob)) {
+    private static SafeRecallSpot findSafeRecallPosition(ServerPlayer player, ServerLevel targetWorld, Entity pet, RecallSummary summary) {
+        if (!(pet instanceof Mob mob)) {
             DebugTrace.log("recall", "Cannot find safe recall spot because entity is not a MobEntity %s", DebugTrace.describeEntity(pet));
             return null;
         }
 
-        BlockPos ownerPos = player.getBlockPos();
+        BlockPos ownerPos = player.blockPosition();
         final int maxRadius = 6;
         final int[] yOffsets = {0, 1, -1};
         SafeRecallSpot bestSpot = null;
@@ -622,7 +621,7 @@ public final class PetRecallService {
                         }
 
                         int usage = summary.recallSpotUsage.getOrDefault(candidate.asLong(), 0);
-                        Vec3d position = new Vec3d(candidate.getX() + 0.5D, candidate.getY(), candidate.getZ() + 0.5D);
+                        Vec3 position = new Vec3(candidate.getX() + 0.5D, candidate.getY(), candidate.getZ() + 0.5D);
                         if (usage < bestUsage) {
                             bestUsage = usage;
                             bestSpot = new SafeRecallSpot(candidate, position);
@@ -637,10 +636,10 @@ public final class PetRecallService {
         }
 
         BlockPos underPlayer = ownerPos;
-        Vec3d underPlayerPosition = new Vec3d(player.getX(), underPlayer.getY(), player.getZ());
+        Vec3 underPlayerPosition = new Vec3(player.getX(), underPlayer.getY(), player.getZ());
         if (canTeleportTo(targetWorld, mob, underPlayer, underPlayerPosition, true)) {
             int usage = summary.recallSpotUsage.getOrDefault(underPlayer.asLong(), 0);
-            Vec3d position = underPlayerPosition;
+            Vec3 position = underPlayerPosition;
             SafeRecallSpot fallback = new SafeRecallSpot(underPlayer, position);
             if (bestSpot == null || usage <= bestUsage) {
                 DebugTrace.log("recall", "Using under-player fallback spot for %s spot=%s usage=%d", DebugTrace.describeEntity(pet), underPlayer, usage);
@@ -656,13 +655,13 @@ public final class PetRecallService {
         return bestSpot;
     }
 
-    private static boolean canTeleportTo(ServerWorld targetWorld, MobEntity mob, BlockPos pos) {
+    private static boolean canTeleportTo(ServerLevel targetWorld, Mob mob, BlockPos pos) {
         return canTeleportTo(targetWorld, mob, pos,
-                new Vec3d(pos.getX() + 0.5D, pos.getY(), pos.getZ() + 0.5D), false);
+                new Vec3(pos.getX() + 0.5D, pos.getY(), pos.getZ() + 0.5D), false);
     }
 
-    private static boolean canTeleportTo(ServerWorld targetWorld, MobEntity mob, BlockPos pos, Vec3d destination, boolean ignoreEntityCollisions) {
-        BlockPos belowPos = pos.down();
+    private static boolean canTeleportTo(ServerLevel targetWorld, Mob mob, BlockPos pos, Vec3 destination, boolean ignoreEntityCollisions) {
+        BlockPos belowPos = pos.below();
         BlockState belowState = targetWorld.getBlockState(belowPos);
         if (belowState.getBlock() instanceof LeavesBlock) {
             return false;
@@ -670,7 +669,7 @@ public final class PetRecallService {
         if (!targetWorld.getFluidState(belowPos).isEmpty()) {
             return false;
         }
-        if (!belowState.isSideSolidFullSquare(targetWorld, belowPos, Direction.UP)) {
+        if (!belowState.isFaceSturdy(targetWorld, belowPos, Direction.UP)) {
             return false;
         }
 
@@ -678,11 +677,11 @@ public final class PetRecallService {
             return false;
         }
 
-        Box targetBox = mob.getBoundingBox().offset(
+        AABB targetBox = mob.getBoundingBox().move(
                 destination.x - mob.getX(), destination.y - mob.getY(), destination.z - mob.getZ());
-        if (targetBox.minY < targetWorld.getBottomY()
-                || targetBox.maxY > targetWorld.getBottomY() + targetWorld.getHeight()
-                || !targetWorld.getWorldBorder().contains(targetBox)) {
+        if (targetBox.minY < targetWorld.getMinY()
+                || targetBox.maxY > targetWorld.getMinY() + targetWorld.getHeight()
+                || !targetWorld.getWorldBorder().isWithinBounds(targetBox)) {
             return false;
         }
         if (boxContainsFluid(targetWorld, targetBox)) {
@@ -690,16 +689,16 @@ public final class PetRecallService {
         }
 
         return ignoreEntityCollisions
-                ? targetWorld.isSpaceEmpty(targetBox)
-                : targetWorld.isSpaceEmpty(mob, targetBox);
+                ? targetWorld.noCollision(targetBox)
+                : targetWorld.noCollision(mob, targetBox);
     }
 
-    private static boolean isPassableRecallSpace(ServerWorld world, BlockPos pos) {
+    private static boolean isPassableRecallSpace(ServerLevel world, BlockPos pos) {
         BlockState state = world.getBlockState(pos);
         return state.isAir() || state.getCollisionShape(world, pos).isEmpty();
     }
 
-    private static boolean hasCollisionFooting(ServerWorld world, BlockPos pos) {
+    private static boolean hasCollisionFooting(ServerLevel world, BlockPos pos) {
         if (!world.getFluidState(pos).isEmpty()) {
             return false;
         }
@@ -710,11 +709,11 @@ public final class PetRecallService {
             return false;
         }
 
-        return shape.getMax(Direction.Axis.Y) > 0.0D;
+        return shape.max(Direction.Axis.Y) > 0.0D;
     }
 
-    private static boolean boxContainsFluid(ServerWorld world, Box box) {
-        for (BlockPos blockPos : BlockPos.iterate(box)) {
+    private static boolean boxContainsFluid(ServerLevel world, AABB box) {
+        for (BlockPos blockPos : BlockPos.betweenClosed(box)) {
             if (!world.getFluidState(blockPos).isEmpty()) {
                 return true;
             }
@@ -727,7 +726,7 @@ public final class PetRecallService {
         summary.recallSpotUsage.merge(key, 1, Integer::sum);
     }
 
-    private static boolean isCrossDimensionRecall(ServerPlayerEntity player, PetRecord record) {
+    private static boolean isCrossDimensionRecall(ServerPlayer player, PetRecord record) {
         return !record.dimensionId().equals(VersionCompat.getDimensionId(player));
     }
 
@@ -786,14 +785,14 @@ public final class PetRecallService {
         FAILED
     }
 
-    private record SafeRecallSpot(BlockPos blockPos, Vec3d position) {
+    private record SafeRecallSpot(BlockPos blockPos, Vec3 position) {
     }
 
     private record ChunkOperationKey(String dimensionId, long chunkPosLong) {
     }
 
     private static final class RecallRunner {
-        private final ServerPlayerEntity player;
+        private final ServerPlayer player;
         private final MinecraftServer server;
         private final List<PetRecord> records;
         private final RecallSummary summary;
@@ -803,7 +802,7 @@ public final class PetRecallService {
         private boolean finished;
 
         private RecallRunner(
-                ServerPlayerEntity player,
+                ServerPlayer player,
                 MinecraftServer server,
                 List<PetRecord> records,
                 RecallSummary summary,

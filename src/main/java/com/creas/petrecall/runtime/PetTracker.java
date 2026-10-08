@@ -10,28 +10,28 @@ import java.util.Collection;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
-import net.minecraft.entity.Entity;
 import net.minecraft.server.MinecraftServer;
-import net.minecraft.server.world.ServerWorld;
+import net.minecraft.server.level.ServerLevel;
+import net.minecraft.world.entity.Entity;
 import org.jetbrains.annotations.Nullable;
 
 public final class PetTracker {
     private final Map<UUID, Entity> loadedPets = new ConcurrentHashMap<>();
 
-    public void onEntityLoad(Entity entity, ServerWorld world) {
+    public void onEntityLoad(Entity entity, ServerLevel world) {
         DebugTrace.log("tracker", "ENTITY_LOAD %s %s", DebugTrace.describeEntity(entity), DebugTrace.describeWorld(world));
         this.observe(entity, world);
     }
 
-    public void onEntityUnload(Entity entity, ServerWorld world) {
+    public void onEntityUnload(Entity entity, ServerLevel world) {
         DebugTrace.log("tracker", "ENTITY_UNLOAD %s %s", DebugTrace.describeEntity(entity), DebugTrace.describeWorld(world));
         Entity.RemovalReason reason = entity.getRemovalReason();
         if (reason != null && reason.shouldDestroy()) {
-            this.removeRecord(world.getServer(), entity.getUuid());
+            this.removeRecord(world.getServer(), entity.getUUID());
         } else {
             this.observe(entity, world);
         }
-        this.loadedPets.remove(entity.getUuid(), entity);
+        this.loadedPets.remove(entity.getUUID(), entity);
     }
 
     public void clearRuntime() {
@@ -39,10 +39,10 @@ public final class PetTracker {
         this.loadedPets.clear();
     }
 
-    public void observe(Entity entity, ServerWorld world) {
+    public void observe(Entity entity, ServerLevel world) {
         Entity.RemovalReason reason = entity.getRemovalReason();
         if (reason != null && reason.shouldDestroy()) {
-            this.removeRecord(world.getServer(), entity.getUuid());
+            this.removeRecord(world.getServer(), entity.getUUID());
             return;
         }
         OwnedPetData ownedPet;
@@ -50,16 +50,16 @@ public final class PetTracker {
             ownedPet = PetOwnershipUtil.getOwnedPetData(entity);
         } catch (RuntimeException error) {
             // An unreadable modded entity is not evidence that ownership was removed.
-            PetRecallMod.LOGGER.warn("Cannot inspect pet {}; keeping its index record", entity.getUuid(), error);
+            PetRecallMod.LOGGER.warn("Cannot inspect pet {}; keeping its index record", entity.getUUID(), error);
             return;
         }
         MinecraftServer server = world.getServer();
         if (ownedPet == null) {
             DebugTrace.log("tracker", "Ignoring entity without supported companion ownership: %s", DebugTrace.describeEntity(entity));
-            this.loadedPets.remove(entity.getUuid(), entity);
-            PetRecallMod.getRecallService().onPetRemoved(entity.getUuid());
+            this.loadedPets.remove(entity.getUUID(), entity);
+            PetRecallMod.getRecallService().onPetRemoved(entity.getUUID());
             if (server != null) {
-                PetIndexState.get(server).remove(entity.getUuid());
+                PetIndexState.get(server).remove(entity.getUUID());
             }
             return;
         }
@@ -68,8 +68,8 @@ public final class PetTracker {
             return;
         }
 
-        this.loadedPets.put(entity.getUuid(), entity);
-        PetRecallMod.getRecallService().onPetObserved(entity.getUuid());
+        this.loadedPets.put(entity.getUUID(), entity);
+        PetRecallMod.getRecallService().onPetObserved(entity.getUUID());
         PetIndexState state = PetIndexState.get(server);
         PetRecord record = PetRecord.fromEntity(world, entity, ownedPet.ownerUuid(), ownedPet.sitting(), ownedPet.health());
         DebugTrace.log("tracker", "Observed supported pet: %s", DebugTrace.describeRecord(record));
@@ -97,20 +97,20 @@ public final class PetTracker {
         PetIndexState.get(server).remove(petUuid);
     }
 
-    public void upsertRecordFromEntity(ServerWorld world, Entity entity) {
+    public void upsertRecordFromEntity(ServerLevel world, Entity entity) {
         this.observe(entity, world);
     }
 
     public int rescanLoadedPetsForOwner(MinecraftServer server, UUID ownerUuid) {
         DebugTrace.log("tracker", "Starting loaded pet rescan for owner=%s", ownerUuid);
         int found = 0;
-        for (ServerWorld world : server.getWorlds()) {
-            for (Entity entity : world.iterateEntities()) {
+        for (ServerLevel world : server.getAllLevels()) {
+            for (Entity entity : world.getAllEntities()) {
                 OwnedPetData ownedPet;
                 try {
                     ownedPet = PetOwnershipUtil.getOwnedPetData(entity);
                 } catch (RuntimeException error) {
-                    PetRecallMod.LOGGER.warn("Cannot rescan entity {}", entity.getUuid(), error);
+                    PetRecallMod.LOGGER.warn("Cannot rescan entity {}", entity.getUUID(), error);
                     continue;
                 }
                 if (ownedPet != null && ownedPet.ownerUuid().equals(ownerUuid)) {

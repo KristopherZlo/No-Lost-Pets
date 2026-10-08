@@ -20,7 +20,7 @@ class PetRecordTest {
         PetRecord record = record("minecraft:the_nether", 0L);
 
         assertNotNull(record.dimensionKey());
-        assertEquals("minecraft:the_nether", record.dimensionKey().getValue().toString());
+        assertEquals("minecraft:the_nether", record.dimensionKey().identifier().toString());
     }
 
     @Test

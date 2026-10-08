@@ -3,14 +3,14 @@ package com.creas.petrecall.index;
 import com.mojang.serialization.Codec;
 import com.mojang.serialization.codecs.RecordCodecBuilder;
 import java.util.UUID;
-import net.minecraft.registry.Registries;
-import net.minecraft.registry.RegistryKey;
-import net.minecraft.registry.RegistryKeys;
-import net.minecraft.server.world.ServerWorld;
-import net.minecraft.util.Identifier;
-import net.minecraft.util.Uuids;
-import net.minecraft.util.math.ChunkPos;
-import net.minecraft.world.World;
+import net.minecraft.core.UUIDUtil;
+import net.minecraft.core.registries.BuiltInRegistries;
+import net.minecraft.core.registries.Registries;
+import net.minecraft.resources.Identifier;
+import net.minecraft.resources.ResourceKey;
+import net.minecraft.server.level.ServerLevel;
+import net.minecraft.world.level.ChunkPos;
+import net.minecraft.world.level.Level;
 import org.jetbrains.annotations.Nullable;
 
 public record PetRecord(
@@ -26,8 +26,8 @@ public record PetRecord(
         float health
 ) {
     public static final Codec<PetRecord> CODEC = RecordCodecBuilder.create(instance -> instance.group(
-            Uuids.CODEC.fieldOf("pet_uuid").forGetter(PetRecord::petUuid),
-            Uuids.CODEC.fieldOf("owner_uuid").forGetter(PetRecord::ownerUuid),
+            UUIDUtil.AUTHLIB_CODEC.fieldOf("pet_uuid").forGetter(PetRecord::petUuid),
+            UUIDUtil.AUTHLIB_CODEC.fieldOf("owner_uuid").forGetter(PetRecord::ownerUuid),
             Codec.STRING.fieldOf("entity_type").forGetter(PetRecord::entityTypeId),
             Codec.STRING.fieldOf("dimension").forGetter(PetRecord::dimensionId),
             Codec.LONG.fieldOf("chunk_pos").forGetter(PetRecord::chunkPosLong),
@@ -38,13 +38,13 @@ public record PetRecord(
             Codec.FLOAT.optionalFieldOf("health", 0.0F).forGetter(PetRecord::health)
     ).apply(instance, PetRecord::new));
 
-    public static PetRecord fromEntity(ServerWorld world, net.minecraft.entity.Entity entity, UUID ownerUuid, boolean sitting, float health) {
+    public static PetRecord fromEntity(ServerLevel world, net.minecraft.world.entity.Entity entity, UUID ownerUuid, boolean sitting, float health) {
         return new PetRecord(
-                entity.getUuid(),
+                entity.getUUID(),
                 ownerUuid,
-                Registries.ENTITY_TYPE.getId(entity.getType()).toString(),
-                world.getRegistryKey().getValue().toString(),
-                entity.getChunkPos().toLong(),
+                BuiltInRegistries.ENTITY_TYPE.getKey(entity.getType()).toString(),
+                world.dimension().identifier().toString(),
+                entity.chunkPosition().toLong(),
                 entity.getX(),
                 entity.getY(),
                 entity.getZ(),
@@ -58,11 +58,11 @@ public record PetRecord(
     }
 
     @Nullable
-    public RegistryKey<World> dimensionKey() {
+    public ResourceKey<Level> dimensionKey() {
         Identifier id = Identifier.tryParse(this.dimensionId);
         if (id == null) {
             return null;
         }
-        return RegistryKey.of(RegistryKeys.WORLD, id);
+        return ResourceKey.create(Registries.DIMENSION, id);
     }
 }

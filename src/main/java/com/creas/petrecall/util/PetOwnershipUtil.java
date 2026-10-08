@@ -2,17 +2,17 @@ package com.creas.petrecall.util;
 
 import java.util.List;
 import java.util.UUID;
-import net.minecraft.entity.Entity;
-import net.minecraft.entity.LazyEntityReference;
-import net.minecraft.entity.LivingEntity;
-import net.minecraft.entity.Ownable;
-import net.minecraft.entity.passive.AbstractHorseEntity;
-import net.minecraft.entity.passive.TameableEntity;
-import net.minecraft.entity.player.PlayerEntity;
-import net.minecraft.nbt.NbtCompound;
-import net.minecraft.storage.NbtWriteView;
-import net.minecraft.util.Uuids;
-import net.minecraft.util.ErrorReporter;
+import net.minecraft.core.UUIDUtil;
+import net.minecraft.nbt.CompoundTag;
+import net.minecraft.util.ProblemReporter;
+import net.minecraft.world.entity.Entity;
+import net.minecraft.world.entity.EntityReference;
+import net.minecraft.world.entity.LivingEntity;
+import net.minecraft.world.entity.TamableAnimal;
+import net.minecraft.world.entity.TraceableEntity;
+import net.minecraft.world.entity.animal.equine.AbstractHorse;
+import net.minecraft.world.entity.player.Player;
+import net.minecraft.world.level.storage.TagValueOutput;
 import org.jetbrains.annotations.Nullable;
 
 public final class PetOwnershipUtil {
@@ -38,8 +38,8 @@ public final class PetOwnershipUtil {
 
     @Nullable
     public static OwnedPetData getOwnedPetData(Entity entity) {
-        if (entity instanceof TameableEntity tameable) {
-            if (!tameable.isTamed()) {
+        if (entity instanceof TamableAnimal tameable) {
+            if (!tameable.isTame()) {
                 return null;
             }
             UUID ownerUuid = getOwnerUuid(tameable.getOwnerReference());
@@ -47,23 +47,23 @@ public final class PetOwnershipUtil {
                 return null;
             }
             float health = tameable.getHealth();
-            return new OwnedPetData(ownerUuid, tameable.isSitting(), health);
+            return new OwnedPetData(ownerUuid, tameable.isOrderedToSit(), health);
         }
 
         // Tamed mounts (horse/donkey/mule/llama/camel/etc.) do not have companion follow-to-owner behavior.
-        if (entity instanceof AbstractHorseEntity) {
+        if (entity instanceof AbstractHorse) {
             return null;
         }
 
-        if (!(entity instanceof LivingEntity living) || entity instanceof PlayerEntity) {
+        if (!(entity instanceof LivingEntity living) || entity instanceof Player) {
             return null;
         }
 
         UUID ownerUuid = null;
-        if (entity instanceof Ownable ownable) {
+        if (entity instanceof TraceableEntity ownable) {
             ownerUuid = getOwnerUuid(ownable.getOwner());
         }
-        NbtCompound entityNbt = null;
+        CompoundTag entityNbt = null;
         if (ownerUuid == null) {
             entityNbt = writeEntityNbt(entity);
             ownerUuid = findOwnerUuidInNbt(entityNbt);
@@ -85,11 +85,11 @@ public final class PetOwnershipUtil {
 
     @Nullable
     private static UUID getOwnerUuid(@Nullable Entity owner) {
-        return owner == null ? null : owner.getUuid();
+        return owner == null ? null : owner.getUUID();
     }
 
     @Nullable
-    private static UUID findOwnerUuidInNbt(@Nullable NbtCompound nbt) {
+    private static UUID findOwnerUuidInNbt(@Nullable CompoundTag nbt) {
         if (nbt == null) {
             return null;
         }
@@ -117,7 +117,7 @@ public final class PetOwnershipUtil {
         return null;
     }
 
-    private static boolean isSittingFromNbt(@Nullable NbtCompound nbt) {
+    private static boolean isSittingFromNbt(@Nullable CompoundTag nbt) {
         if (nbt == null) {
             return false;
         }
@@ -137,7 +137,7 @@ public final class PetOwnershipUtil {
         return false;
     }
 
-    private static boolean hasCompanionFollowSignalsInNbt(@Nullable NbtCompound nbt) {
+    private static boolean hasCompanionFollowSignalsInNbt(@Nullable CompoundTag nbt) {
         if (nbt == null) {
             return false;
         }
@@ -152,29 +152,29 @@ public final class PetOwnershipUtil {
     }
 
     @Nullable
-    private static UUID getOwnerUuid(@Nullable LazyEntityReference<LivingEntity> ownerReference) {
+    private static UUID getOwnerUuid(@Nullable EntityReference<LivingEntity> ownerReference) {
         if (ownerReference == null) {
             return null;
         }
-        return ownerReference.getUuid();
+        return ownerReference.getUUID();
     }
 
     @Nullable
-    private static NbtCompound writeEntityNbt(Entity entity) {
-        NbtWriteView view = NbtWriteView.create(ErrorReporter.EMPTY, entity.getRegistryManager());
-        if (!entity.saveData(view)) {
-            throw new IllegalStateException("Cannot inspect ownership of entity " + entity.getUuid());
+    private static CompoundTag writeEntityNbt(Entity entity) {
+        TagValueOutput view = TagValueOutput.createWithContext(ProblemReporter.DISCARDING, entity.registryAccess());
+        if (!entity.save(view)) {
+            throw new IllegalStateException("Cannot inspect ownership of entity " + entity.getUUID());
         }
-        return view.getNbt();
+        return view.buildResult();
     }
 
     @Nullable
-    private static UUID tryReadUuid(NbtCompound nbt, String key) {
+    private static UUID tryReadUuid(CompoundTag nbt, String key) {
         var intArray = nbt.getIntArray(key);
         if (intArray.isPresent()) {
             int[] value = intArray.get();
             if (value.length == 4) {
-                return Uuids.toUuid(value);
+                return UUIDUtil.uuidFromIntArray(value);
             }
         }
 
@@ -191,7 +191,7 @@ public final class PetOwnershipUtil {
     }
 
     @Nullable
-    private static UUID tryReadUuidFromLongPair(NbtCompound nbt, String mostKey, String leastKey) {
+    private static UUID tryReadUuidFromLongPair(CompoundTag nbt, String mostKey, String leastKey) {
         var most = nbt.getLong(mostKey);
         var least = nbt.getLong(leastKey);
         if (most.isEmpty() || least.isEmpty()) {
@@ -200,7 +200,7 @@ public final class PetOwnershipUtil {
         return new UUID(most.get(), least.get());
     }
 
-    private static OptionalBoolean tryReadBoolean(NbtCompound nbt, String key) {
+    private static OptionalBoolean tryReadBoolean(CompoundTag nbt, String key) {
         var value = nbt.getBoolean(key);
         if (value.isEmpty()) {
             return OptionalBoolean.empty();
@@ -208,7 +208,7 @@ public final class PetOwnershipUtil {
         return OptionalBoolean.of(value.get());
     }
 
-    private static OptionalByte tryReadByte(NbtCompound nbt, String key) {
+    private static OptionalByte tryReadByte(CompoundTag nbt, String key) {
         var value = nbt.getByte(key);
         if (value.isEmpty()) {
             return OptionalByte.empty();

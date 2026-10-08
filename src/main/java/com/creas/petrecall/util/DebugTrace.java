@@ -12,10 +12,10 @@ import java.time.format.DateTimeFormatter;
 import java.util.Locale;
 import java.util.UUID;
 import net.fabricmc.loader.api.FabricLoader;
-import net.minecraft.entity.Entity;
-import net.minecraft.server.network.ServerPlayerEntity;
-import net.minecraft.server.world.ServerWorld;
-import net.minecraft.util.math.ChunkPos;
+import net.minecraft.server.level.ServerLevel;
+import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.world.entity.Entity;
+import net.minecraft.world.level.ChunkPos;
 import org.jetbrains.annotations.Nullable;
 
 public final class DebugTrace {
@@ -99,7 +99,7 @@ public final class DebugTrace {
         log(category, message);
     }
 
-    public static String describePlayer(@Nullable ServerPlayerEntity player) {
+    public static String describePlayer(@Nullable ServerPlayer player) {
         if (!ENABLED) {
             return "";
         }
@@ -108,20 +108,20 @@ public final class DebugTrace {
         }
         String dimensionId = VersionCompat.getDimensionId(player);
         return "player=" + player.getName().getString()
-                + " uuid=" + player.getUuid()
+                + " uuid=" + player.getUUID()
                 + " dim=" + dimensionId
                 + " pos=" + formatPos(player.getX(), player.getY(), player.getZ())
-                + " onGround=" + player.isOnGround();
+                + " onGround=" + player.onGround();
     }
 
-    public static String describeWorld(@Nullable ServerWorld world) {
+    public static String describeWorld(@Nullable ServerLevel world) {
         if (!ENABLED) {
             return "";
         }
         if (world == null) {
             return "world=null";
         }
-        return "world=" + world.getRegistryKey().getValue();
+        return "world=" + world.dimension().identifier();
     }
 
     public static String describeEntity(@Nullable Entity entity) {
@@ -133,10 +133,10 @@ public final class DebugTrace {
         }
         String dimensionId = VersionCompat.getDimensionId(entity);
         return "entityType=" + entity.getType().toString()
-                + " uuid=" + entity.getUuid()
+                + " uuid=" + entity.getUUID()
                 + " dim=" + dimensionId
                 + " pos=" + formatPos(entity.getX(), entity.getY(), entity.getZ())
-                + " chunk=" + entity.getChunkPos();
+                + " chunk=" + entity.chunkPosition();
     }
 
     public static String describeRecord(@Nullable PetRecord record) {

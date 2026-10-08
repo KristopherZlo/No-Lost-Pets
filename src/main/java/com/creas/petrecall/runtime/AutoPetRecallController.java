@@ -14,7 +14,7 @@ import java.util.Set;
 import java.util.UUID;
 import java.util.function.Consumer;
 import net.minecraft.server.MinecraftServer;
-import net.minecraft.server.network.ServerPlayerEntity;
+import net.minecraft.server.level.ServerPlayer;
 
 public final class AutoPetRecallController {
     private static final long AUTO_RETRY_THROTTLE_TICKS = 4L;
@@ -40,17 +40,17 @@ public final class AutoPetRecallController {
     }
 
     public void onServerTick(MinecraftServer server) {
-        if (server.getOverworld() == null) {
+        if (server.overworld() == null) {
             return;
         }
 
         this.sessionTick++;
-        long now = server.getOverworld().getTime();
+        long now = server.overworld().getGameTime();
         Set<UUID> onlinePlayers = new HashSet<>();
-        for (ServerPlayerEntity player : server.getPlayerManager().getPlayerList()) {
-            onlinePlayers.add(player.getUuid());
-            if (this.suppressedPlayers.contains(player.getUuid())) {
-                this.playerStates.remove(player.getUuid());
+        for (ServerPlayer player : server.getPlayerList().getPlayers()) {
+            onlinePlayers.add(player.getUUID());
+            if (this.suppressedPlayers.contains(player.getUUID())) {
+                this.playerStates.remove(player.getUUID());
                 continue;
             }
             this.tickPlayer(server, player, now);
@@ -59,30 +59,30 @@ public final class AutoPetRecallController {
         this.playerStates.keySet().removeIf(uuid -> !onlinePlayers.contains(uuid));
     }
 
-    public void scheduleImmediate(ServerPlayerEntity player) {
+    public void scheduleImmediate(ServerPlayer player) {
         MinecraftServer server = VersionCompat.getServer(player);
-        if (server == null || server.getOverworld() == null) {
+        if (server == null || server.overworld() == null) {
             return;
         }
-        if (this.suppressedPlayers.contains(player.getUuid())) {
+        if (this.suppressedPlayers.contains(player.getUUID())) {
             return;
         }
 
-        PlayerAutoState state = this.playerStates.computeIfAbsent(player.getUuid(), ignored -> new PlayerAutoState());
-        this.scheduleCheck(state, server.getOverworld().getTime(), "immediate event for " + player.getName().getString());
+        PlayerAutoState state = this.playerStates.computeIfAbsent(player.getUUID(), ignored -> new PlayerAutoState());
+        this.scheduleCheck(state, server.overworld().getGameTime(), "immediate event for " + player.getName().getString());
     }
 
-    public void scheduleAfterJoin(ServerPlayerEntity player) {
+    public void scheduleAfterJoin(ServerPlayer player) {
         MinecraftServer server = VersionCompat.getServer(player);
-        if (server == null || server.getOverworld() == null) {
+        if (server == null || server.overworld() == null) {
             return;
         }
-        if (this.suppressedPlayers.contains(player.getUuid())) {
+        if (this.suppressedPlayers.contains(player.getUUID())) {
             return;
         }
 
-        long now = server.getOverworld().getTime();
-        PlayerAutoState state = this.playerStates.computeIfAbsent(player.getUuid(), ignored -> new PlayerAutoState());
+        long now = server.overworld().getGameTime();
+        PlayerAutoState state = this.playerStates.computeIfAbsent(player.getUUID(), ignored -> new PlayerAutoState());
         state.joinRepairPending = true;
         state.joinRepairTick = computeJoinRepairTick(now);
         this.scheduleCheck(state, computeJoinRecallTick(now), "join warmup for " + player.getName().getString());
@@ -107,19 +107,19 @@ public final class AutoPetRecallController {
         this.playerStates.remove(playerUuid);
     }
 
-    public boolean debugRunImmediateCheck(ServerPlayerEntity player, java.util.List<PetRecord> records, Consumer<RecallSummary> onComplete) {
+    public boolean debugRunImmediateCheck(ServerPlayer player, java.util.List<PetRecord> records, Consumer<RecallSummary> onComplete) {
         if (records.isEmpty()) {
             return false;
         }
 
         MinecraftServer server = VersionCompat.getServer(player);
-        if (server == null || server.getOverworld() == null || player.isRemoved() || player.isSpectator()
+        if (server == null || server.overworld() == null || player.isRemoved() || player.isSpectator()
                 || !PetRecallService.isPlayerGroundedForRecall(player)) {
             return false;
         }
 
-        long now = server.getOverworld().getTime();
-        UUID playerUuid = player.getUuid();
+        long now = server.overworld().getGameTime();
+        UUID playerUuid = player.getUUID();
         PlayerAutoState state = this.playerStates.computeIfAbsent(playerUuid, ignored -> new PlayerAutoState());
         java.util.ArrayList<PetRecord> batchRecords = new java.util.ArrayList<>(records);
         boolean hasMoreCandidates = batchRecords.size() > MAX_UNLOADED_PETS_PER_AUTO_RUN;
@@ -149,16 +149,16 @@ public final class AutoPetRecallController {
         return started;
     }
 
-    private void tickPlayer(MinecraftServer server, ServerPlayerEntity player, long now) {
+    private void tickPlayer(MinecraftServer server, ServerPlayer player, long now) {
         if (player.isRemoved() || player.isSpectator()) {
             return;
         }
 
-        UUID playerUuid = player.getUuid();
+        UUID playerUuid = player.getUUID();
         PlayerAutoState state = this.playerStates.computeIfAbsent(playerUuid, ignored -> new PlayerAutoState());
         this.maybeRunJoinRepair(server, player, state, now);
 
-        long currentChunk = player.getChunkPos().toLong();
+        long currentChunk = player.chunkPosition().toLong();
         String currentDimension = VersionCompat.getDimensionId(player);
         boolean onGround = PetRecallService.isPlayerGroundedForRecall(player);
         double currentX = player.getX();
@@ -245,8 +245,8 @@ public final class AutoPetRecallController {
         }
     }
 
-    private AutoRecallBatch collectAutoRecallCandidates(MinecraftServer server, ServerPlayerEntity player, long now) {
-        Collection<PetRecord> records = this.tracker.getOwnerRecords(server, player.getUuid());
+    private AutoRecallBatch collectAutoRecallCandidates(MinecraftServer server, ServerPlayer player, long now) {
+        Collection<PetRecord> records = this.tracker.getOwnerRecords(server, player.getUUID());
         if (records.isEmpty()) {
             return AutoRecallBatch.empty();
         }
@@ -335,20 +335,20 @@ public final class AutoPetRecallController {
         }
     }
 
-    private void maybeRunJoinRepair(MinecraftServer server, ServerPlayerEntity player, PlayerAutoState state, long now) {
+    private void maybeRunJoinRepair(MinecraftServer server, ServerPlayer player, PlayerAutoState state, long now) {
         if (!state.joinRepairPending || now < state.joinRepairTick) {
             return;
         }
 
         state.joinRepairPending = false;
-        int ownerRecordCount = this.tracker.getOwnerRecords(server, player.getUuid()).size();
+        int ownerRecordCount = this.tracker.getOwnerRecords(server, player.getUUID()).size();
         if (!shouldRunJoinRepair(this.sessionTick, ownerRecordCount)) {
             DebugTrace.log("auto-recall", "Skipped join repair for %s indexedRecords=%d sessionTick=%d",
                     DebugTrace.describePlayer(player), ownerRecordCount, this.sessionTick);
             return;
         }
 
-        int found = this.tracker.rescanLoadedPetsForOwner(server, player.getUuid());
+        int found = this.tracker.rescanLoadedPetsForOwner(server, player.getUUID());
         DebugTrace.log("auto-recall", "Join repair completed for %s found=%d indexedBefore=%d",
                 DebugTrace.describePlayer(player), found, ownerRecordCount);
         if (found > 0) {
@@ -356,8 +356,8 @@ public final class AutoPetRecallController {
         }
     }
 
-    private void handleBatchCompleted(MinecraftServer server, ServerPlayerEntity player, UUID playerUuid, AutoRecallBatch batch, RecallSummary summary) {
-        if (server.getOverworld() == null) {
+    private void handleBatchCompleted(MinecraftServer server, ServerPlayer player, UUID playerUuid, AutoRecallBatch batch, RecallSummary summary) {
+        if (server.overworld() == null) {
             return;
         }
 
@@ -366,7 +366,7 @@ public final class AutoPetRecallController {
             return;
         }
 
-        long callbackNow = server.getOverworld().getTime();
+        long callbackNow = server.overworld().getGameTime();
         if (summary.recalled > 0 && batch.hasMoreCandidates()) {
             DebugTrace.log("auto-recall", "Auto recall batch partial success for %s recalled=%d skipped=%d failed=%d continuingNextTick",
                     DebugTrace.describePlayer(player), summary.recalled, summary.skipped, summary.failed);

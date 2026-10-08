@@ -11,14 +11,14 @@ import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 import net.minecraft.server.MinecraftServer;
-import net.minecraft.world.PersistentState;
-import net.minecraft.world.PersistentStateManager;
-import net.minecraft.world.PersistentStateType;
+import net.minecraft.world.level.saveddata.SavedData;
+import net.minecraft.world.level.saveddata.SavedDataType;
+import net.minecraft.world.level.storage.DimensionDataStorage;
 import org.jetbrains.annotations.Nullable;
 
-public final class PetIndexState extends PersistentState {
-    private static final Codec<Map<UUID, PetRecord>> PETS_CODEC = Codec.unboundedMap(net.minecraft.util.Uuids.CODEC, PetRecord.CODEC);
-    public static final PersistentStateType<PetIndexState> TYPE = new PersistentStateType<>(
+public final class PetIndexState extends SavedData {
+    private static final Codec<Map<UUID, PetRecord>> PETS_CODEC = Codec.unboundedMap(net.minecraft.core.UUIDUtil.AUTHLIB_CODEC, PetRecord.CODEC);
+    public static final SavedDataType<PetIndexState> TYPE = new SavedDataType<>(
             "pet_recall_index",
             PetIndexState::new,
             PETS_CODEC.xmap(PetIndexState::new, PetIndexState::copyPetMap),
@@ -51,8 +51,8 @@ public final class PetIndexState extends PersistentState {
     }
 
     public static PetIndexState get(MinecraftServer server) {
-        PersistentStateManager manager = server.getOverworld().getPersistentStateManager();
-        return manager.getOrCreate(TYPE);
+        DimensionDataStorage manager = server.overworld().getDataStorage();
+        return manager.computeIfAbsent(TYPE);
     }
 
     public void put(PetRecord record) {
@@ -68,7 +68,7 @@ public final class PetIndexState extends PersistentState {
             }
         }
         this.petsByOwner.computeIfAbsent(record.ownerUuid(), ignored -> new HashSet<>()).add(record.petUuid());
-        this.markDirty();
+        this.setDirty();
     }
 
     public void remove(UUID petUuid) {
@@ -85,7 +85,7 @@ public final class PetIndexState extends PersistentState {
                 this.petsByOwner.remove(removed.ownerUuid());
             }
         }
-        this.markDirty();
+        this.setDirty();
     }
 
     @Nullable
