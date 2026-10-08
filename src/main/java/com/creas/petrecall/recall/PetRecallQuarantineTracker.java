@@ -15,6 +15,10 @@ final class PetRecallQuarantineTracker {
         this.states.remove(petUuid);
     }
 
+    public synchronized void clearAll() {
+        this.states.clear();
+    }
+
     public synchronized boolean isQuarantined(UUID petUuid, long now) {
         PetRuntimeState state = this.states.get(petUuid);
         return state != null && now < state.quarantineUntilTick;

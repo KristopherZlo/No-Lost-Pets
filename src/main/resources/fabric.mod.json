@@ -3,7 +3,7 @@
   "id": "pet_recall",
   "version": "${version}",
   "name": "NoLostPets",
-  "description": "Recall pets from unloaded chunks without loading chunks (no chunk loading), with safe vanilla-style teleport spots and loaded-pet support.",
+  "description": "Bring companion pets back to their owner with temporary source chunk loading and safe teleport positions. Sitting and mounted pets stay in place.",
   "authors": [
     "Zlo"
   ],

@@ -8,6 +8,7 @@ import net.minecraft.entity.LivingEntity;
 import net.minecraft.entity.Ownable;
 import net.minecraft.entity.passive.AbstractHorseEntity;
 import net.minecraft.entity.passive.TameableEntity;
+import net.minecraft.entity.player.PlayerEntity;
 import net.minecraft.nbt.NbtCompound;
 import net.minecraft.storage.NbtWriteView;
 import net.minecraft.util.Uuids;
@@ -54,7 +55,7 @@ public final class PetOwnershipUtil {
             return null;
         }
 
-        if (!(entity instanceof LivingEntity living)) {
+        if (!(entity instanceof LivingEntity living) || entity instanceof PlayerEntity) {
             return null;
         }
 
@@ -160,15 +161,11 @@ public final class PetOwnershipUtil {
 
     @Nullable
     private static NbtCompound writeEntityNbt(Entity entity) {
-        try {
-            NbtWriteView view = NbtWriteView.create(ErrorReporter.EMPTY);
-            if (!entity.saveData(view)) {
-                return null;
-            }
-            return view.getNbt();
-        } catch (RuntimeException ignored) {
-            return null;
+        NbtWriteView view = NbtWriteView.create(ErrorReporter.EMPTY, entity.getRegistryManager());
+        if (!entity.saveData(view)) {
+            throw new IllegalStateException("Cannot inspect ownership of entity " + entity.getUuid());
         }
+        return view.getNbt();
     }
 
     @Nullable

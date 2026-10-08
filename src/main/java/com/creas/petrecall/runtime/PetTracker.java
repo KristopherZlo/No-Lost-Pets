@@ -25,7 +25,12 @@ public final class PetTracker {
 
     public void onEntityUnload(Entity entity, ServerWorld world) {
         DebugTrace.log("tracker", "ENTITY_UNLOAD %s %s", DebugTrace.describeEntity(entity), DebugTrace.describeWorld(world));
-        this.observe(entity, world);
+        Entity.RemovalReason reason = entity.getRemovalReason();
+        if (reason != null && reason.shouldDestroy()) {
+            this.removeRecord(world.getServer(), entity.getUuid());
+        } else {
+            this.observe(entity, world);
+        }
         this.loadedPets.remove(entity.getUuid(), entity);
     }
 
@@ -35,7 +40,19 @@ public final class PetTracker {
     }
 
     public void observe(Entity entity, ServerWorld world) {
-        OwnedPetData ownedPet = PetOwnershipUtil.getOwnedPetData(entity);
+        Entity.RemovalReason reason = entity.getRemovalReason();
+        if (reason != null && reason.shouldDestroy()) {
+            this.removeRecord(world.getServer(), entity.getUuid());
+            return;
+        }
+        OwnedPetData ownedPet;
+        try {
+            ownedPet = PetOwnershipUtil.getOwnedPetData(entity);
+        } catch (RuntimeException error) {
+            // An unreadable modded entity is not evidence that ownership was removed.
+            PetRecallMod.LOGGER.warn("Cannot inspect pet {}; keeping its index record", entity.getUuid(), error);
+            return;
+        }
         MinecraftServer server = world.getServer();
         if (ownedPet == null) {
             DebugTrace.log("tracker", "Ignoring entity without supported companion ownership: %s", DebugTrace.describeEntity(entity));
@@ -89,7 +106,13 @@ public final class PetTracker {
         int found = 0;
         for (ServerWorld world : server.getWorlds()) {
             for (Entity entity : world.iterateEntities()) {
-                OwnedPetData ownedPet = PetOwnershipUtil.getOwnedPetData(entity);
+                OwnedPetData ownedPet;
+                try {
+                    ownedPet = PetOwnershipUtil.getOwnedPetData(entity);
+                } catch (RuntimeException error) {
+                    PetRecallMod.LOGGER.warn("Cannot rescan entity {}", entity.getUuid(), error);
+                    continue;
+                }
                 if (ownedPet != null && ownedPet.ownerUuid().equals(ownerUuid)) {
                     this.observe(entity, world);
                     found++;

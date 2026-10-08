@@ -6,7 +6,8 @@
   "environment": "*",
   "entrypoints": {
     "fabric-gametest": [
-      "com.creas.petrecall.gametest.PetRecallGameTests"
+      "com.creas.petrecall.gametest.PetRecallGameTests",
+      "com.creas.petrecall.gametest.PetRecallBehaviorGameTests"
     ]
   },
   "depends": {

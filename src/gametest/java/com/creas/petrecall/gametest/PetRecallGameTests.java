@@ -79,7 +79,7 @@ public final class PetRecallGameTests {
         });
     }
 
-    @GameTest(maxTicks = 120)
+    @GameTest(maxTicks = 700)
     public void staleUnloadedRecordIsRemovedAfterThreeFailedRecalls(TestContext context) {
         PetRecallMod.getTracker().clearRuntime();
         buildPlatform(context);

@@ -2,40 +2,30 @@ package com.creas.petrecall.recall;
 
 import com.creas.petrecall.PetRecallMod;
 import com.creas.petrecall.index.PetRecord;
-import com.creas.petrecall.mixin.accessor.ServerEntityManagerAccessor;
-import com.creas.petrecall.mixin.accessor.ServerWorldAccessor;
+import com.creas.petrecall.index.PetIndexState;
 import com.creas.petrecall.runtime.PetTracker;
 import com.creas.petrecall.util.DebugTrace;
 import com.creas.petrecall.util.PetOwnershipUtil;
 import com.creas.petrecall.util.PetOwnershipUtil.OwnedPetData;
 import com.creas.petrecall.util.VersionCompat;
-import it.unimi.dsi.fastutil.longs.LongSet;
 import java.util.AbstractList;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
+import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
-import java.util.concurrent.CompletableFuture;
 import java.util.function.Consumer;
 import net.minecraft.block.BlockState;
 import net.minecraft.block.LeavesBlock;
 import net.minecraft.entity.Entity;
-import net.minecraft.entity.EntityType;
 import net.minecraft.entity.mob.MobEntity;
-import net.minecraft.entity.SpawnReason;
-import net.minecraft.nbt.NbtCompound;
-import net.minecraft.nbt.NbtHelper;
-import net.minecraft.nbt.NbtList;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.network.ServerPlayerEntity;
-import net.minecraft.server.world.ServerEntityManager;
 import net.minecraft.server.world.ServerWorld;
-import net.minecraft.storage.NbtWriteView;
-import net.minecraft.util.ErrorReporter;
 import net.minecraft.util.math.BlockPos;
 import net.minecraft.util.math.Box;
 import net.minecraft.util.math.ChunkPos;
@@ -43,17 +33,18 @@ import net.minecraft.util.math.Direction;
 import net.minecraft.util.math.Vec3d;
 import net.minecraft.util.shape.VoxelShape;
 import net.minecraft.world.TeleportTarget;
-import net.minecraft.world.chunk.Chunk;
-import net.minecraft.world.storage.ChunkDataAccess;
-import net.minecraft.world.storage.ChunkDataList;
-import net.minecraft.world.storage.EntityChunkDataAccess;
 import org.jetbrains.annotations.Nullable;
 
 public final class PetRecallService {
     private final PetTracker tracker;
     private final Set<UUID> activeRecalls = new HashSet<>();
     private final Set<UUID> activePetRecalls = new HashSet<>();
-    private final ChunkRecallScheduler<ChunkOperationKey> chunkScheduler = new ChunkRecallScheduler<>();
+    private static final int LOAD_TIMEOUT_TICKS = 200;
+    private final Map<UUID, RecallRunner> runners = new HashMap<>();
+    private final ChunkRecallScheduler<ChunkOperationKey> chunkScheduler = new ChunkRecallScheduler<>(
+            4, LOAD_TIMEOUT_TICKS, error -> PetRecallMod.LOGGER.error("Recall completion failed", error)
+    );
+    private boolean stopping;
     private final PetRecallQuarantineTracker quarantineTracker = new PetRecallQuarantineTracker();
 
     public PetRecallService(PetTracker tracker) {
@@ -149,12 +140,12 @@ public final class PetRecallService {
         MinecraftServer server = VersionCompat.getServer(player);
         DebugTrace.log("recall", "Recall request includeLoaded=%s rescanIfEmpty=%s presetRecords=%s collectMessages=%s %s",
                 includeLoadedPets, rescanIfEmpty, presetRecords == null ? "null" : presetRecords.size(), collectMessages, DebugTrace.describePlayer(player));
-        if (server == null) {
+        if (server == null || this.stopping) {
             RecallSummary summary = new RecallSummary(collectMessages);
             summary.messages.add("Server is not available");
             summary.failed = 1;
             DebugTrace.log("recall", "Rejecting recall because server is null %s", DebugTrace.describePlayer(player));
-            onComplete.accept(summary);
+            this.notifyComplete(onComplete, summary);
             return false;
         }
 
@@ -174,30 +165,35 @@ public final class PetRecallService {
                 this.activeRecalls.remove(playerUuid);
             }
             DebugTrace.log("recall", "Recall started but immediately failed because player is not on ground %s", DebugTrace.describePlayer(player));
-            onComplete.accept(summary);
+            this.notifyComplete(onComplete, summary);
             return true;
         }
 
-        List<PetRecord> records = presetRecords == null
-                ? new ArrayList<>(this.tracker.getOwnerRecords(server, playerUuid))
-                : new ArrayList<>(presetRecords);
-        if (records.isEmpty() && rescanIfEmpty && presetRecords == null) {
-            DebugTrace.log("recall", "No indexed records for %s, running rescan", DebugTrace.describePlayer(player));
-            this.tracker.rescanLoadedPetsForOwner(server, playerUuid);
-            records = new ArrayList<>(this.tracker.getOwnerRecords(server, playerUuid));
+        try {
+            List<PetRecord> records = presetRecords == null
+                    ? new ArrayList<>(this.tracker.getOwnerRecords(server, playerUuid))
+                    : new ArrayList<>(presetRecords);
+            if (records.isEmpty() && rescanIfEmpty && presetRecords == null) {
+                this.tracker.rescanLoadedPetsForOwner(server, playerUuid);
+                records = new ArrayList<>(this.tracker.getOwnerRecords(server, playerUuid));
+            }
+            Map<UUID, PetRecord> unique = new LinkedHashMap<>();
+            records.forEach(record -> unique.putIfAbsent(record.petUuid(), record));
+            records = new ArrayList<>(unique.values());
+            this.sortRecordsForRecall(player, records, includeLoadedPets);
+            RecallSummary summary = new RecallSummary(collectMessages);
+            summary.totalKnown = records.size();
+            RecallRunner runner = new RecallRunner(player, server, records, summary, onComplete, includeLoadedPets);
+            this.runners.put(playerUuid, runner);
+            this.advanceRunner(runner);
+        } catch (RuntimeException error) {
+            this.activeRecalls.remove(playerUuid);
+            PetRecallMod.LOGGER.error("Failed preparing recall for {}", playerUuid, error);
+            RecallSummary summary = new RecallSummary(collectMessages);
+            summary.failed = 1;
+            summary.messages.add("Recall preparation failed; no pet was removed.");
+            this.notifyComplete(onComplete, summary);
         }
-
-        this.sortRecordsForRecall(player, records, includeLoadedPets);
-        DebugTrace.log("recall", "Prepared recall list for %s records=%d includeLoaded=%s", DebugTrace.describePlayer(player), records.size(), includeLoadedPets);
-        for (PetRecord record : records) {
-            DebugTrace.log("recall", "  candidate %s", DebugTrace.describeRecord(record));
-        }
-
-        RecallSummary summary = new RecallSummary(collectMessages);
-        summary.totalKnown = records.size();
-
-        RecallRunner runner = new RecallRunner(player, server, records, summary, onComplete, includeLoadedPets);
-        this.advanceRunner(runner);
         return true;
     }
 
@@ -244,376 +240,168 @@ public final class PetRecallService {
         return this.tracker.rescanLoadedPetsForOwner(server, player.getUuid());
     }
 
+    public void onServerTick(MinecraftServer server) {
+        if (!this.stopping) {
+            this.chunkScheduler.tick();
+        }
+    }
+
+    public void clearRuntime() {
+        this.stopping = true;
+        try {
+            for (RecallRunner runner : new ArrayList<>(this.runners.values())) {
+                this.failRemaining(runner, "Recall cancelled: server stopping.");
+            }
+            this.chunkScheduler.clear();
+            this.activeRecalls.clear();
+            this.activePetRecalls.clear();
+            this.quarantineTracker.clearAll();
+        } finally {
+            this.stopping = false;
+        }
+    }
+
     private void advanceRunner(RecallRunner runner) {
-        while (true) {
+        while (!runner.finished) {
             if (runner.index >= runner.records.size()) {
                 this.finishRunner(runner);
                 return;
             }
-
-            ServerPlayerEntity player = runner.player;
-            if (player.isRemoved()) {
-                runner.summary.messages.add("Player is no longer available");
-                runner.summary.failed += Math.max(0, runner.records.size() - runner.index);
-                runner.summary.attempted += Math.max(0, runner.records.size() - runner.index);
-                this.finishRunner(runner);
+            if (!canContinueRecallForPlayer(runner.player)) {
+                this.failRemaining(runner, "Recall stopped: player unavailable or airborne.");
                 return;
             }
-
-            if (!isPlayerGroundedForRecall(player)) {
-                runner.summary.messages.add("Recall stopped: stand on the ground.");
-                runner.summary.failed += Math.max(0, runner.records.size() - runner.index);
-                runner.summary.attempted += Math.max(0, runner.records.size() - runner.index);
-                this.finishRunner(runner);
-                return;
-            }
-
             PetRecord record = runner.records.get(runner.index);
-            if (isCrossDimensionRecall(player, record)) {
-                addCrossDimensionSkipMessage(runner.summary, record.petUuid());
-                runner.summary.skipped++;
-                runner.index++;
-                continue;
-            }
-
+            runner.summary.attempted++;
             if (!this.tryBeginPetRecall(record.petUuid())) {
                 runner.summary.messages.add("Pet recall is already in progress for " + record.petUuid());
                 runner.summary.failed++;
                 runner.index++;
                 continue;
             }
-
-            RecallOutcome loadedOutcome = this.tryHandleLoadedIfPresent(player, record.petUuid(), runner.summary, runner.includeLoadedPets);
-            if (loadedOutcome != null) {
-                try {
-                    runner.summary.attempted++;
-                    applyOutcome(runner.summary, loadedOutcome);
-                } finally {
-                    this.endPetRecall(record.petUuid());
+            try {
+                RecallOutcome outcome = this.tryHandleLoadedIfPresent(
+                        runner.player, record.petUuid(), runner.summary, runner.includeLoadedPets);
+                if (outcome == null) {
+                    if (isCrossDimensionRecall(runner.player, record)) {
+                        addCrossDimensionSkipMessage(runner.summary, record.petUuid());
+                        outcome = RecallOutcome.SKIPPED;
+                    } else {
+                        var key = record.dimensionKey();
+                        ServerWorld world = key == null ? null : runner.server.getWorld(key);
+                        if (world != null) {
+                            this.beginUnloadedRecall(runner, record, world);
+                            return;
+                        }
+                        runner.summary.messages.add("Source world unavailable for " + record.petUuid());
+                        outcome = RecallOutcome.FAILED;
+                    }
                 }
-                runner.index++;
-                continue;
+                applyOutcome(runner.summary, outcome);
+            } catch (RuntimeException error) {
+                PetRecallMod.LOGGER.error("Recall failed for pet {}", record.petUuid(), error);
+                runner.summary.failed++;
+                runner.summary.messages.add("Recall failed for " + record.petUuid());
             }
+            this.endPetRecall(record.petUuid());
+            runner.index++;
+        }
+    }
 
-            runner.summary.attempted++;
-            this.beginUnloadedRecall(runner, record);
+    private void failRemaining(RecallRunner runner, String message) {
+        if (runner.finished) {
             return;
         }
+        runner.summary.messages.add(message);
+        runner.summary.failed += runner.records.size() - runner.index;
+        runner.summary.attempted = runner.records.size();
+        if (runner.index < runner.records.size()) {
+            this.endPetRecall(runner.records.get(runner.index).petUuid());
+        }
+        this.finishRunner(runner);
     }
 
     private void finishRunner(RecallRunner runner) {
-        synchronized (this.activeRecalls) {
-            this.activeRecalls.remove(runner.player.getUuid());
+        if (runner.finished) {
+            return;
         }
-        DebugTrace.log("recall", "Runner finished for %s totalKnown=%d attempted=%d recalled=%d skipped=%d failed=%d",
-                DebugTrace.describePlayer(runner.player), runner.summary.totalKnown, runner.summary.attempted, runner.summary.recalled, runner.summary.skipped, runner.summary.failed);
-        runner.onComplete.accept(runner.summary);
+        runner.finished = true;
+        this.runners.remove(runner.player.getUuid(), runner);
+        this.activeRecalls.remove(runner.player.getUuid());
+        this.notifyComplete(runner.onComplete, runner.summary);
     }
 
-    private void beginUnloadedRecall(RecallRunner runner, PetRecord record) {
-        MinecraftServer server = runner.server;
-        ServerPlayerEntity player = runner.player;
-        DebugTrace.log("recall", "Beginning unloaded recall path %s for %s", DebugTrace.describeRecord(record), DebugTrace.describePlayer(player));
-
-        var sourceWorldKey = record.dimensionKey();
-        if (sourceWorldKey == null) {
-            runner.summary.messages.add("Bad dimension id for pet " + record.petUuid() + ": " + record.dimensionId());
-            DebugTrace.log("recall", "Bad dimension key for %s", DebugTrace.describeRecord(record));
-            this.tracker.removeRecord(server, record.petUuid());
-            this.onPetRemoved(record.petUuid());
-            this.completeRecord(runner, record, RecallOutcome.FAILED);
-            return;
-        }
-
-        ServerWorld sourceWorld = server.getWorld(sourceWorldKey);
-        if (sourceWorld == null) {
-            runner.summary.messages.add("Source world missing for pet " + record.petUuid() + ": " + sourceWorldKey.getValue());
-            DebugTrace.log("recall", "Source world missing for %s", DebugTrace.describeRecord(record));
-            this.completeRecord(runner, record, RecallOutcome.FAILED);
-            return;
-        }
-
-        if (isCrossDimensionRecall(player, record)) {
-            this.completeRecord(runner, record, RecallOutcome.SKIPPED);
-            return;
-        }
-
-        ChunkOperationKey chunkKey = new ChunkOperationKey(record.dimensionId(), record.chunkPosLong());
-        DebugTrace.log("recall", "Queueing chunk operation dim=%s chunk=%s for %s", record.dimensionId(), record.chunkPos(), DebugTrace.describePetUuid(record.petUuid()));
-        Runnable task = () -> this.performQueuedUnloadedRecall(runner, record, sourceWorld, chunkKey);
-        Runnable toRun = this.chunkScheduler.enqueue(chunkKey, task);
-        if (toRun != null) {
-            toRun.run();
-        }
-    }
-
-    private void performQueuedUnloadedRecall(RecallRunner runner, PetRecord record, ServerWorld sourceWorld, ChunkOperationKey chunkKey) {
+    private void notifyComplete(Consumer<RecallSummary> callback, RecallSummary summary) {
         try {
-            DebugTrace.log("recall", "Executing queued unload recall dim=%s chunk=%s %s", record.dimensionId(), record.chunkPos(), DebugTrace.describeRecord(record));
-            if (!canContinueRecallForPlayer(runner.player)) {
-                DebugTrace.log("recall", "Cancelling queued recall because player can no longer continue %s", DebugTrace.describePlayer(runner.player));
-                this.completeQueuedRecord(runner, record, chunkKey, RecallOutcome.FAILED);
-                return;
-            }
-
-            if (isCrossDimensionRecall(runner.player, record)) {
-                this.completeQueuedRecord(runner, record, chunkKey, RecallOutcome.SKIPPED);
-                return;
-            }
-
-            RecallOutcome loadedOutcome = this.tryHandleLoadedIfPresent(runner.player, record.petUuid(), runner.summary, runner.includeLoadedPets);
-            if (loadedOutcome != null) {
-                this.completeQueuedRecord(runner, record, chunkKey, loadedOutcome);
-                return;
-            }
-
-            ChunkPos chunkPos = record.chunkPos();
-            if (isEntityChunkLoaded(sourceWorld, chunkPos)) {
-                DebugTrace.log("recall", "Source entity chunk is already loaded; switching to loaded chunk fallback %s chunk=%s", DebugTrace.describeRecord(record), DebugTrace.describeChunk(chunkPos));
-                RecallOutcome fallbackOutcome = this.handleLoadedChunkFallback(runner, record, sourceWorld, chunkPos);
-                this.completeQueuedRecord(runner, record, chunkKey, fallbackOutcome);
-                return;
-            }
-
-            EntityChunkDataAccess dataAccess = getEntityChunkDataAccess(sourceWorld);
-            Object storage = VersionCompat.getChunkStorage(dataAccess);
-            DebugTrace.log("recall", "Reading entity chunk data for %s chunk=%s sourceWorld=%s", DebugTrace.describePetUuid(record.petUuid()), DebugTrace.describeChunk(chunkPos), DebugTrace.describeWorld(sourceWorld));
-            dataAccess.readChunkData(chunkPos).whenComplete((chunkData, throwable) -> runner.server.execute(() ->
-                    this.handleChunkDataLoaded(runner, record, sourceWorld, chunkPos, chunkKey, dataAccess, storage, chunkData, throwable)
-            ));
-        } catch (RuntimeException e) {
-            DebugTrace.log("recall", "Queued unload recall crashed for %s error=%s", DebugTrace.describeRecord(record), e.getMessage());
-            this.endPetRecall(record.petUuid());
-            Runnable next = this.chunkScheduler.complete(chunkKey);
-            if (next != null) {
-                runner.server.execute(next);
-            }
-            throw e;
+            callback.accept(summary);
+        } catch (RuntimeException error) {
+            PetRecallMod.LOGGER.error("Pet recall callback failed", error);
         }
     }
 
-    private void handleChunkDataLoaded(
-            RecallRunner runner,
-            PetRecord record,
-            ServerWorld sourceWorld,
-            ChunkPos chunkPos,
-            ChunkOperationKey chunkKey,
-            EntityChunkDataAccess dataAccess,
-            Object storage,
-            @Nullable ChunkDataList<Entity> chunkData,
-            @Nullable Throwable throwable
-    ) {
-        if (throwable != null) {
-            PetRecallMod.LOGGER.warn("Failed reading entity chunk data for {} in {}", chunkPos, sourceWorld.getRegistryKey().getValue(), throwable);
-            DebugTrace.log("recall", "Chunk read failed for %s chunk=%s error=%s", DebugTrace.describeRecord(record), DebugTrace.describeChunk(chunkPos), throwable.getMessage());
-            runner.summary.messages.add("Read failed for pet " + record.petUuid());
-            this.completeQueuedRecord(runner, record, chunkKey, RecallOutcome.FAILED);
-            return;
-        }
-
-        if (!canContinueRecallForPlayer(runner.player)) {
-            runner.summary.messages.add("Recall cancelled while waiting for pet " + record.petUuid());
-            this.completeQueuedRecord(runner, record, chunkKey, RecallOutcome.FAILED);
-            return;
-        }
-
-        if (isCrossDimensionRecall(runner.player, record)) {
-            this.completeQueuedRecord(runner, record, chunkKey, RecallOutcome.SKIPPED);
-            return;
-        }
-
-        RecallOutcome loadedOutcome = this.tryHandleLoadedIfPresent(runner.player, record.petUuid(), runner.summary, runner.includeLoadedPets);
-        if (loadedOutcome != null) {
-            this.completeQueuedRecord(runner, record, chunkKey, loadedOutcome);
-            return;
-        }
-
-        if (isEntityChunkLoaded(sourceWorld, chunkPos)) {
-            RecallOutcome fallbackOutcome = this.handleLoadedChunkFallback(runner, record, sourceWorld, chunkPos);
-            this.completeQueuedRecord(runner, record, chunkKey, fallbackOutcome);
-            return;
-        }
-
-        if (chunkData == null) {
-            DebugTrace.log("recall", "Chunk data was null for %s chunk=%s", DebugTrace.describeRecord(record), DebugTrace.describeChunk(chunkPos));
-            RecallOutcome missOutcome = this.handleMissingIndexedPet(runner.server, record, runner.summary, "Entity chunk missing for indexed pet " + chunkPos + ": ");
-            this.completeQueuedRecord(runner, record, chunkKey, missOutcome);
-            return;
-        }
-
-        DebugTrace.log("recall", "Chunk data loaded for %s chunk=%s entityCount=%d",
-                DebugTrace.describeRecord(record), DebugTrace.describeChunk(chunkPos), chunkData.stream().toList().size());
-        List<Entity> originalEntities = new ArrayList<>(chunkData.stream().toList());
-        Entity sourcePet = null;
-        for (Entity entity : originalEntities) {
-            if (entity.getUuid().equals(record.petUuid())) {
-                sourcePet = entity;
-                break;
+    private void beginUnloadedRecall(RecallRunner runner, PetRecord record, ServerWorld sourceWorld) {
+        ChunkOperationKey key = new ChunkOperationKey(record.dimensionId(), record.chunkPosLong());
+        this.chunkScheduler.enqueue(key, new ChunkRecallScheduler.Operation() {
+            @Override
+            public boolean canContinue() {
+                return !runner.finished && canContinueRecallForPlayer(runner.player)
+                        && !isCrossDimensionRecall(runner.player, record);
             }
-        }
 
-        if (sourcePet == null) {
-            DebugTrace.log("recall", "Indexed pet not found inside loaded chunk data for %s chunk=%s", DebugTrace.describeRecord(record), DebugTrace.describeChunk(chunkPos));
-            RecallOutcome missOutcome = this.handleMissingIndexedPet(runner.server, record, runner.summary, "Pet not found in indexed chunk " + chunkPos + ": ");
-            this.completeQueuedRecord(runner, record, chunkKey, missOutcome);
-            return;
-        }
-
-        OwnedPetData ownedPet = PetOwnershipUtil.getOwnedPetData(sourcePet);
-        if (ownedPet == null) {
-            DebugTrace.log("recall", "Source pet no longer matches supported companion rules %s", DebugTrace.describeEntity(sourcePet));
-            this.tracker.removeRecord(runner.server, record.petUuid());
-            this.onPetRemoved(record.petUuid());
-            runner.summary.messages.add("Non-following tamed mob skipped " + record.petUuid());
-            this.completeQueuedRecord(runner, record, chunkKey, RecallOutcome.SKIPPED);
-            return;
-        }
-
-        if (!ownedPet.ownerUuid().equals(runner.player.getUuid())) {
-            DebugTrace.log("recall", "Ownership mismatch during unloaded recall sourceOwner=%s player=%s %s", ownedPet.ownerUuid(), runner.player.getUuid(), DebugTrace.describeRecord(record));
-            runner.summary.messages.add("Ownership mismatch for pet " + record.petUuid());
-            this.completeQueuedRecord(runner, record, chunkKey, RecallOutcome.FAILED);
-            return;
-        }
-
-        if (ownedPet.sitting()) {
-            DebugTrace.log("recall", "Skipping sitting pet during unloaded recall %s", DebugTrace.describeRecord(record));
-            this.onPetObserved(record.petUuid());
-            runner.summary.messages.add("Sitting pet skipped " + record.petUuid());
-            this.completeQueuedRecord(runner, record, chunkKey, RecallOutcome.SKIPPED);
-            return;
-        }
-
-        NbtCompound petSnapshot = writeEntityData(sourcePet);
-        if (petSnapshot == null) {
-            DebugTrace.log("recall", "Failed to serialize source pet snapshot %s", DebugTrace.describeEntity(sourcePet));
-            runner.summary.messages.add("Failed to serialize pet " + record.petUuid());
-            this.completeQueuedRecord(runner, record, chunkKey, RecallOutcome.FAILED);
-            return;
-        }
-
-        List<Entity> updatedEntities = new ArrayList<>(originalEntities);
-        updatedEntities.remove(sourcePet);
-
-        ChunkDataList<Entity> updatedChunkData = new ChunkDataList<>(chunkPos, updatedEntities);
-        ChunkDataList<Entity> originalChunkData = new ChunkDataList<>(chunkPos, originalEntities);
-        DebugTrace.log("recall", "Writing updated chunk data after removing pet %s chunk=%s remainingEntities=%d",
-                DebugTrace.describePetUuid(record.petUuid()), DebugTrace.describeChunk(chunkPos), updatedEntities.size());
-        writeChunkDataAsync(dataAccess, storage, updatedChunkData).whenComplete((unused, writeThrowable) -> runner.server.execute(() ->
-                this.handleChunkWriteCompleted(runner, record, chunkKey, dataAccess, storage, originalChunkData, petSnapshot, writeThrowable)
-        ));
-    }
-
-    private void handleChunkWriteCompleted(
-            RecallRunner runner,
-            PetRecord record,
-            ChunkOperationKey chunkKey,
-            EntityChunkDataAccess dataAccess,
-            Object storage,
-            ChunkDataList<Entity> originalChunkData,
-            NbtCompound petSnapshot,
-            @Nullable Throwable writeThrowable
-    ) {
-        if (writeThrowable != null) {
-            PetRecallMod.LOGGER.warn("Failed writing entity chunk data after removing pet {}", record.petUuid(), writeThrowable);
-            DebugTrace.log("recall", "Chunk write failed after removing pet %s error=%s", DebugTrace.describeRecord(record), writeThrowable.getMessage());
-            runner.summary.messages.add("Write failed for pet " + record.petUuid());
-            this.completeQueuedRecord(runner, record, chunkKey, RecallOutcome.FAILED);
-            return;
-        }
-
-        if (!canContinueRecallForPlayer(runner.player)) {
-            runner.summary.messages.add("Recall cancelled before spawning pet " + record.petUuid());
-            rollbackChunkWrite(dataAccess, storage, runner.server, originalChunkData, record.petUuid(), () ->
-                    this.completeQueuedRecord(runner, record, chunkKey, RecallOutcome.FAILED)
-            );
-            return;
-        }
-
-        if (isCrossDimensionRecall(runner.player, record)) {
-            rollbackChunkWrite(dataAccess, storage, runner.server, originalChunkData, record.petUuid(), () ->
-                    this.completeQueuedRecord(runner, record, chunkKey, RecallOutcome.SKIPPED)
-            );
-            return;
-        }
-
-        RecallOutcome loadedOutcome = this.tryHandleLoadedIfPresent(runner.player, record.petUuid(), runner.summary, runner.includeLoadedPets);
-        if (loadedOutcome != null) {
-            this.completeQueuedRecord(runner, record, chunkKey, loadedOutcome);
-            return;
-        }
-
-        ServerWorld targetWorld = VersionCompat.getServerWorld(runner.player);
-        if (targetWorld == null) {
-            DebugTrace.log("recall", "Target world missing while recreating unloaded pet %s", DebugTrace.describeRecord(record));
-            runner.summary.messages.add("Player world is unavailable for pet " + record.petUuid());
-            rollbackChunkWrite(dataAccess, storage, runner.server, originalChunkData, record.petUuid(), () ->
-                    this.completeQueuedRecord(runner, record, chunkKey, RecallOutcome.FAILED)
-            );
-            return;
-        }
-        Entity recreated = EntityType.loadEntityWithPassengers(petSnapshot.copy(), targetWorld, SpawnReason.COMMAND, entity -> entity);
-        if (recreated == null) {
-            DebugTrace.log("recall", "Failed to recreate entity from snapshot for %s", DebugTrace.describeRecord(record));
-            runner.summary.messages.add("Failed to recreate pet " + record.petUuid());
-            rollbackChunkWrite(dataAccess, storage, runner.server, originalChunkData, record.petUuid(), () ->
-                    this.completeQueuedRecord(runner, record, chunkKey, RecallOutcome.FAILED)
-            );
-            return;
-        }
-
-        SafeRecallSpot safeSpot = findSafeRecallPosition(runner.player, targetWorld, recreated, runner.summary);
-        if (safeSpot == null) {
-            DebugTrace.log("recall", "No safe spot found for recreated pet %s around %s", DebugTrace.describeEntity(recreated), DebugTrace.describePlayer(runner.player));
-            runner.summary.messages.add("No safe spot near player for pet " + record.petUuid());
-            rollbackChunkWrite(dataAccess, storage, runner.server, originalChunkData, record.petUuid(), () ->
-                    this.completeQueuedRecord(runner, record, chunkKey, RecallOutcome.FAILED)
-            );
-            return;
-        }
-
-        recreated.refreshPositionAndAngles(safeSpot.position(), recreated.getYaw(), recreated.getPitch());
-        boolean spawned = targetWorld.spawnNewEntityAndPassengers(recreated);
-        if (!spawned) {
-            DebugTrace.log("recall", "Failed to spawn recreated pet into target world %s safeSpot=%s", DebugTrace.describeEntity(recreated), safeSpot.blockPos());
-            runner.summary.messages.add("Failed to spawn pet " + record.petUuid());
-            rollbackChunkWrite(dataAccess, storage, runner.server, originalChunkData, record.petUuid(), () ->
-                    this.completeQueuedRecord(runner, record, chunkKey, RecallOutcome.FAILED)
-            );
-            return;
-        }
-
-        DebugTrace.log("recall", "Spawned recreated pet successfully %s safeSpot=%s", DebugTrace.describeEntity(recreated), safeSpot.blockPos());
-        reserveRecallSpot(runner.summary, safeSpot);
-        this.tracker.upsertRecordFromEntity(targetWorld, recreated);
-        this.onPetObserved(record.petUuid());
-        this.completeQueuedRecord(runner, record, chunkKey, RecallOutcome.RECALLED);
-    }
-
-    private void completeRecord(RecallRunner runner, PetRecord record, RecallOutcome outcome) {
-        try {
-            applyOutcome(runner.summary, outcome);
-        } finally {
-            DebugTrace.log("recall", "Completed immediate record outcome=%s %s", outcome, DebugTrace.describeRecord(record));
-            this.endPetRecall(record.petUuid());
-        }
-        runner.index++;
-        this.advanceRunner(runner);
-    }
-
-    private void completeQueuedRecord(RecallRunner runner, PetRecord record, ChunkOperationKey chunkKey, RecallOutcome outcome) {
-        try {
-            applyOutcome(runner.summary, outcome);
-        } finally {
-            DebugTrace.log("recall", "Completed queued record outcome=%s dim=%s chunkLong=%d %s", outcome, chunkKey.dimensionId(), chunkKey.chunkPosLong(), DebugTrace.describeRecord(record));
-            this.endPetRecall(record.petUuid());
-            Runnable next = this.chunkScheduler.complete(chunkKey);
-            if (next != null) {
-                runner.server.execute(next);
+            @Override
+            public void acquire() {
+                VersionCompat.holdRecallChunk(sourceWorld, record.chunkPos());
             }
-        }
-        runner.index++;
-        this.advanceRunner(runner);
+
+            @Override
+            public boolean isReady() {
+                return VersionCompat.areChunkEntitiesLoaded(sourceWorld, record.chunkPos());
+            }
+
+            @Override
+            public void release() {
+                VersionCompat.releaseRecallChunk(sourceWorld, record.chunkPos());
+            }
+
+            @Override
+            public void complete(ChunkRecallScheduler.Completion completion) {
+                if (runner.finished) {
+                    return;
+                }
+                RecallOutcome outcome = RecallOutcome.FAILED;
+                try {
+                    if (isCrossDimensionRecall(runner.player, record)) {
+                        addCrossDimensionSkipMessage(runner.summary, record.petUuid());
+                        outcome = RecallOutcome.SKIPPED;
+                    } else if (completion.result() == ChunkRecallScheduler.Result.READY) {
+                        // This request started unloaded: automatic recalls must include the entity we just loaded.
+                        Entity entity = tracker.getLoadedPet(record.petUuid());
+                        if (entity == null) {
+                            entity = sourceWorld.getEntity(record.petUuid());
+                        }
+                        if (entity == null) {
+                            outcome = handleMissingIndexedPet(runner.server, record, runner.summary,
+                                    "Pet missing from loaded chunk " + record.chunkPos() + ": ");
+                        } else {
+                            outcome = recallLoadedPet(runner.player, sourceWorld, entity, runner.summary);
+                        }
+                    } else {
+                        runner.summary.messages.add("Chunk load " + completion.result() + " for " + record.petUuid());
+                        if (completion.error() != null) {
+                            PetRecallMod.LOGGER.warn("Failed loading pet chunk {}", record.chunkPos(), completion.error());
+                        }
+                    }
+                } catch (RuntimeException error) {
+                    PetRecallMod.LOGGER.error("Recall failed for pet {}", record.petUuid(), error);
+                    runner.summary.messages.add("Recall failed for " + record.petUuid());
+                } finally {
+                    endPetRecall(record.petUuid());
+                }
+                applyOutcome(runner.summary, outcome);
+                runner.index++;
+                advanceRunner(runner);
+            }
+        });
     }
 
     private static void applyOutcome(RecallSummary summary, RecallOutcome outcome) {
@@ -651,15 +439,22 @@ public final class PetRecallService {
         }
 
         if (!ownedPet.ownerUuid().equals(player.getUuid())) {
+            this.tracker.upsertRecordFromEntity(targetWorld, entity);
             DebugTrace.log("recall", "Loaded recall ownership mismatch entityOwner=%s player=%s %s", ownedPet.ownerUuid(), player.getUuid(), DebugTrace.describeEntity(entity));
             summary.messages.add("Ownership mismatch for pet " + entity.getUuid());
             return RecallOutcome.FAILED;
         }
 
         if (ownedPet.sitting()) {
+            this.tracker.upsertRecordFromEntity(targetWorld, entity);
             DebugTrace.log("recall", "Loaded recall skipped because pet is sitting %s", DebugTrace.describeEntity(entity));
             this.onPetObserved(entity.getUuid());
             summary.messages.add("Sitting pet skipped " + entity.getUuid());
+            return RecallOutcome.SKIPPED;
+        }
+
+        if (entity.hasVehicle() || entity.hasPassengers()) {
+            summary.messages.add("Mounted pet skipped " + entity.getUuid());
             return RecallOutcome.SKIPPED;
         }
 
@@ -691,28 +486,13 @@ public final class PetRecallService {
         return RecallOutcome.RECALLED;
     }
 
-    private RecallOutcome handleLoadedChunkFallback(RecallRunner runner, PetRecord record, ServerWorld sourceWorld, ChunkPos chunkPos) {
-        Entity loadedInChunk = findLoadedPetInChunk(sourceWorld, chunkPos, record.petUuid());
-        if (loadedInChunk == null) {
-            DebugTrace.log("recall", "Loaded chunk fallback could not find pet in chunk %s %s", DebugTrace.describeChunk(chunkPos), DebugTrace.describeRecord(record));
-            return this.handleMissingIndexedPet(runner.server, record, runner.summary, "Pet missing from loaded chunk " + chunkPos + ": ");
-        }
-
-        DebugTrace.log("recall", "Loaded chunk fallback found pet %s", DebugTrace.describeEntity(loadedInChunk));
-        this.tracker.upsertRecordFromEntity(sourceWorld, loadedInChunk);
-        this.onPetObserved(record.petUuid());
-        if (!runner.includeLoadedPets) {
-            return RecallOutcome.SKIPPED;
-        }
-
-        ServerWorld targetWorld = VersionCompat.getServerWorld(runner.player);
-        if (targetWorld == null) {
+    private RecallOutcome handleMissingIndexedPet(MinecraftServer server, PetRecord record, RecallSummary summary, String messagePrefix) {
+        PetRecord current = PetIndexState.get(server).getPet(record.petUuid());
+        if (current == null || !current.equals(record)) {
+            this.quarantineTracker.clear(record.petUuid());
+            summary.messages.add("Pet index changed during recall; retry " + record.petUuid());
             return RecallOutcome.FAILED;
         }
-        return this.recallLoadedPet(runner.player, targetWorld, loadedInChunk, runner.summary);
-    }
-
-    private RecallOutcome handleMissingIndexedPet(MinecraftServer server, PetRecord record, RecallSummary summary, String messagePrefix) {
         long now = getCurrentTick(server);
         PetRecallQuarantineTracker.MissResult missResult = this.quarantineTracker.recordMiss(record.petUuid(), now);
         if (missResult.shouldRemoveRecord()) {
@@ -776,7 +556,7 @@ public final class PetRecallService {
     }
 
     public static boolean isPlayerGroundedForRecall(ServerPlayerEntity player) {
-        if (player.isRemoved()) {
+        if (player.isRemoved() || !player.isAlive()) {
             return false;
         }
         if (player.isOnGround()) {
@@ -857,9 +637,10 @@ public final class PetRecallService {
         }
 
         BlockPos underPlayer = ownerPos;
-        if (canTeleportTo(targetWorld, mob, underPlayer, true)) {
+        Vec3d underPlayerPosition = new Vec3d(player.getX(), underPlayer.getY(), player.getZ());
+        if (canTeleportTo(targetWorld, mob, underPlayer, underPlayerPosition, true)) {
             int usage = summary.recallSpotUsage.getOrDefault(underPlayer.asLong(), 0);
-            Vec3d position = new Vec3d(player.getX(), underPlayer.getY(), player.getZ());
+            Vec3d position = underPlayerPosition;
             SafeRecallSpot fallback = new SafeRecallSpot(underPlayer, position);
             if (bestSpot == null || usage <= bestUsage) {
                 DebugTrace.log("recall", "Using under-player fallback spot for %s spot=%s usage=%d", DebugTrace.describeEntity(pet), underPlayer, usage);
@@ -876,10 +657,11 @@ public final class PetRecallService {
     }
 
     private static boolean canTeleportTo(ServerWorld targetWorld, MobEntity mob, BlockPos pos) {
-        return canTeleportTo(targetWorld, mob, pos, false);
+        return canTeleportTo(targetWorld, mob, pos,
+                new Vec3d(pos.getX() + 0.5D, pos.getY(), pos.getZ() + 0.5D), false);
     }
 
-    private static boolean canTeleportTo(ServerWorld targetWorld, MobEntity mob, BlockPos pos, boolean ignoreEntityCollisions) {
+    private static boolean canTeleportTo(ServerWorld targetWorld, MobEntity mob, BlockPos pos, Vec3d destination, boolean ignoreEntityCollisions) {
         BlockPos belowPos = pos.down();
         BlockState belowState = targetWorld.getBlockState(belowPos);
         if (belowState.getBlock() instanceof LeavesBlock) {
@@ -896,8 +678,13 @@ public final class PetRecallService {
             return false;
         }
 
-        BlockPos relative = pos.subtract(mob.getBlockPos());
-        Box targetBox = mob.getBoundingBox().offset(relative);
+        Box targetBox = mob.getBoundingBox().offset(
+                destination.x - mob.getX(), destination.y - mob.getY(), destination.z - mob.getZ());
+        if (targetBox.minY < targetWorld.getBottomY()
+                || targetBox.maxY > targetWorld.getBottomY() + targetWorld.getHeight()
+                || !targetWorld.getWorldBorder().contains(targetBox)) {
+            return false;
+        }
         if (boxContainsFluid(targetWorld, targetBox)) {
             return false;
         }
@@ -946,98 +733,6 @@ public final class PetRecallService {
 
     private static void addCrossDimensionSkipMessage(RecallSummary summary, UUID petUuid) {
         summary.messages.add("Cross-dimension recall skipped " + petUuid);
-    }
-
-    private static EntityChunkDataAccess getEntityChunkDataAccess(ServerWorld world) {
-        ServerEntityManager<Entity> entityManager = ((ServerWorldAccessor) world).pet_recall$getEntityManager();
-        @SuppressWarnings("unchecked")
-        ChunkDataAccess<Entity> dataAccess = ((ServerEntityManagerAccessor<Entity>) (Object) entityManager).pet_recall$getDataAccess();
-        if (dataAccess instanceof EntityChunkDataAccess entityChunkDataAccess) {
-            return entityChunkDataAccess;
-        }
-        throw new IllegalStateException("Unexpected entity data access: " + dataAccess.getClass().getName());
-    }
-
-    private static boolean isEntityChunkLoaded(ServerWorld world, ChunkPos chunkPos) {
-        ServerEntityManager<Entity> entityManager = ((ServerWorldAccessor) world).pet_recall$getEntityManager();
-        return entityManager.isLoaded(chunkPos.toLong());
-    }
-
-    @Nullable
-    private static Entity findLoadedPetInChunk(ServerWorld world, ChunkPos chunkPos, UUID petUuid) {
-        int minX = chunkPos.getStartX();
-        int minZ = chunkPos.getStartZ();
-        int maxY = world.getBottomY() + world.getHeight();
-        Box chunkBox = new Box(minX, world.getBottomY(), minZ, minX + 16, maxY, minZ + 16);
-        List<Entity> entities = world.getOtherEntities(null, chunkBox, entity -> entity.getUuid().equals(petUuid));
-        return entities.isEmpty() ? null : entities.get(0);
-    }
-
-    @Nullable
-    private static NbtCompound writeEntityData(Entity entity) {
-        try {
-            NbtWriteView view = NbtWriteView.create(ErrorReporter.EMPTY, entity.getRegistryManager());
-            if (!entity.saveData(view)) {
-                return null;
-            }
-            return view.getNbt();
-        } catch (RuntimeException ignored) {
-            return null;
-        }
-    }
-
-    private static CompletableFuture<Void> writeChunkDataAsync(EntityChunkDataAccess dataAccess, Object storage, ChunkDataList<Entity> chunkData) {
-        ChunkPos chunkPos = chunkData.getChunkPos();
-        LongSet emptyChunks = VersionCompat.getEmptyChunks(dataAccess);
-        if (chunkData.isEmpty()) {
-            emptyChunks.add(chunkPos.toLong());
-            return VersionCompat.clearChunkData(storage, chunkPos);
-        }
-
-        NbtCompound chunkNbt = serializeChunkData(chunkData);
-        emptyChunks.remove(chunkPos.toLong());
-        return VersionCompat.writeChunkData(storage, chunkPos, chunkNbt);
-    }
-
-    private static NbtCompound serializeChunkData(ChunkDataList<Entity> chunkData) {
-        ChunkPos chunkPos = chunkData.getChunkPos();
-        ErrorReporter.Logging logging = new ErrorReporter.Logging(Chunk.createErrorReporterContext(chunkPos), PetRecallMod.LOGGER);
-        try {
-            NbtList entitiesNbt = new NbtList();
-            chunkData.stream().forEach(entity -> {
-                NbtWriteView view = NbtWriteView.create(logging.makeChild(entity.getErrorReporterContext()), entity.getRegistryManager());
-                if (entity.saveData(view)) {
-                    entitiesNbt.add(view.getNbt());
-                }
-            });
-
-            NbtCompound chunkNbt = NbtHelper.putDataVersion(new NbtCompound());
-            chunkNbt.put("Entities", entitiesNbt);
-            chunkNbt.put("Position", ChunkPos.CODEC, chunkPos);
-            return chunkNbt;
-        } finally {
-            logging.close();
-        }
-    }
-
-    private static void rollbackChunkWrite(
-            EntityChunkDataAccess dataAccess,
-            Object storage,
-            MinecraftServer server,
-            ChunkDataList<Entity> originalChunkData,
-            UUID petUuid,
-            Runnable afterRollback
-    ) {
-        DebugTrace.log("recall", "Rolling back chunk write for pet=%s chunk=%s", petUuid, DebugTrace.describeChunk(originalChunkData.getChunkPos()));
-        writeChunkDataAsync(dataAccess, storage, originalChunkData).whenComplete((unused, rollbackThrowable) -> server.execute(() -> {
-            if (rollbackThrowable != null) {
-                PetRecallMod.LOGGER.error("Failed rollback for pet {} in chunk {}", petUuid, originalChunkData.getChunkPos(), rollbackThrowable);
-                DebugTrace.log("recall", "Rollback failed for pet=%s chunk=%s error=%s", petUuid, DebugTrace.describeChunk(originalChunkData.getChunkPos()), rollbackThrowable.getMessage());
-            } else {
-                DebugTrace.log("recall", "Rollback completed for pet=%s chunk=%s", petUuid, DebugTrace.describeChunk(originalChunkData.getChunkPos()));
-            }
-            afterRollback.run();
-        }));
     }
 
     public static final class RecallSummary {
@@ -1105,6 +800,7 @@ public final class PetRecallService {
         private final Consumer<RecallSummary> onComplete;
         private final boolean includeLoadedPets;
         private int index;
+        private boolean finished;
 
         private RecallRunner(
                 ServerPlayerEntity player,

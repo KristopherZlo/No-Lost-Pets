@@ -32,7 +32,6 @@ public final class PetRecallSelfTestService {
     private static final int REMOTE_SUITE_STRIDE = 2048;
     private static final int REMOTE_BASE_OFFSET = 4096;
     private static final int UNLOADED_SETTLE_TICKS = 4;
-    private static final int UNLOADED_RETRY_DELAY_TICKS = 4;
 
     @Nullable
     private ActiveSuite activeSuite;
@@ -500,22 +499,6 @@ public final class PetRecallSelfTestService {
             return summary;
         }
 
-        private boolean isTransientUnloadedMiss(@Nullable RecallSummary summary, UUID petUuid) {
-            if (summary == null || summary.recalled != 0 || summary.failed != 1) {
-                return false;
-            }
-
-            String petId = petUuid.toString();
-            for (String message : summary.messages) {
-                if (message.contains(petId) && (message.contains("Pet not found in indexed chunk")
-                        || message.contains("Entity chunk missing")
-                        || message.contains("retry in"))) {
-                    return true;
-                }
-            }
-            return false;
-        }
-
         private boolean isPetQuarantined(UUID petUuid) {
             return PetRecallMod.getRecallService().isPetQuarantined(petUuid, this.now());
         }
@@ -599,8 +582,6 @@ public final class PetRecallSelfTestService {
         private UUID petUuid = new UUID(0L, 0L);
         private int phase;
         private long unloadedAtTick = -1L;
-        private long retryAtTick = -1L;
-        private int retries;
 
         private UnloadedRecallScenario() {
             super("unloaded recall in same dimension", 220);
@@ -622,8 +603,6 @@ public final class PetRecallSelfTestService {
             suite.teleportPlayer(suite.owner, suite.baseWorld, suite.ownerStandPos);
             this.phase = 0;
             this.unloadedAtTick = -1L;
-            this.retryAtTick = -1L;
-            this.retries = 0;
         }
 
         @Override
@@ -645,24 +624,8 @@ public final class PetRecallSelfTestService {
                 return ScenarioResult.running();
             }
 
-            if (this.phase == 2) {
-                if (suite.now() < this.retryAtTick) {
-                    return ScenarioResult.running();
-                }
-                suite.startTargetedRecall(suite.owner, List.of(this.record), true);
-                this.phase = 1;
-                return ScenarioResult.running();
-            }
-
             RecallSummary summary = suite.takeSummary();
             if (summary == null) {
-                return ScenarioResult.running();
-            }
-            if (suite.isTransientUnloadedMiss(summary, this.petUuid) && this.retries < 2) {
-                this.retries++;
-                this.retryAtTick = suite.now() + UNLOADED_RETRY_DELAY_TICKS;
-                this.phase = 2;
-                suite.report("Retrying unloaded recall in same dimension after transient chunk miss (" + this.retries + "/2)");
                 return ScenarioResult.running();
             }
             Entity recalled = suite.getLoadedPet(this.petUuid);
@@ -812,8 +775,11 @@ public final class PetRecallSelfTestService {
             if (PetIndexState.get(suite.server).getPet(this.petUuid) == null) {
                 return ScenarioResult.failed("Sitting unloaded pet should stay indexed");
             }
-            if (suite.isPetLoaded(this.petUuid)) {
-                return ScenarioResult.failed("Sitting unloaded pet should remain unloaded");
+            Entity pet = suite.getLoadedPet(this.petUuid);
+            if (!(pet instanceof WolfEntity wolf) || !wolf.isSitting()
+                    || !wolf.getOwnerReference().getUuid().equals(suite.owner.getUuid())
+                    || !wolf.getBlockPos().equals(BlockPos.ofFloored(this.record.x(), this.record.y(), this.record.z()))) {
+                return ScenarioResult.failed("Sitting pet must retain its owner, state and source position");
             }
             return ScenarioResult.passed("sitting unloaded pet stayed skipped after " + elapsedTicks + " ticks");
         }
@@ -998,9 +964,7 @@ public final class PetRecallSelfTestService {
         private PetRecord record;
         private UUID petUuid = new UUID(0L, 0L);
         private int phase;
-        private long retryAtTick = -1L;
         private long recallStartedAtTick = -1L;
-        private int retries;
 
         private AutoRecallSpeedScenario() {
             super("auto recall path runs quickly", 180);
@@ -1021,9 +985,7 @@ public final class PetRecallSelfTestService {
             }
             suite.teleportPlayer(suite.owner, suite.baseWorld, suite.ownerStandPos);
             this.phase = 0;
-            this.retryAtTick = -1L;
             this.recallStartedAtTick = -1L;
-            this.retries = 0;
         }
 
         @Override
@@ -1038,25 +1000,8 @@ public final class PetRecallSelfTestService {
                 return ScenarioResult.running();
             }
 
-            if (this.phase == 2) {
-                if (suite.now() < this.retryAtTick) {
-                    return ScenarioResult.running();
-                }
-                suite.startDebugAutoRecall(suite.owner, List.of(this.record));
-                this.recallStartedAtTick = suite.now();
-                this.phase = 1;
-                return ScenarioResult.running();
-            }
-
             RecallSummary summary = suite.takeSummary();
             if (summary == null) {
-                return ScenarioResult.running();
-            }
-            if (suite.isTransientUnloadedMiss(summary, this.petUuid) && this.retries < 2) {
-                this.retries++;
-                this.retryAtTick = suite.now() + UNLOADED_RETRY_DELAY_TICKS;
-                this.phase = 2;
-                suite.report("Retrying debug auto recall after transient chunk miss (" + this.retries + "/2)");
                 return ScenarioResult.running();
             }
             Entity recalled = suite.getLoadedPet(this.petUuid);
@@ -1261,8 +1206,6 @@ public final class PetRecallSelfTestService {
         private UUID petUuid = new UUID(0L, 0L);
         private int phase;
         private long unloadedAtTick = -1L;
-        private long retryAtTick = -1L;
-        private int ownerRetries;
 
         private OwnershipUnloadedScenario() {
             super("other player cannot recall an unloaded foreign pet", 240);
@@ -1288,8 +1231,6 @@ public final class PetRecallSelfTestService {
             suite.teleportPlayer(suite.otherPlayer, suite.baseWorld, suite.otherStandPos);
             this.phase = 0;
             this.unloadedAtTick = -1L;
-            this.retryAtTick = -1L;
-            this.ownerRetries = 0;
         }
 
         @Override
@@ -1311,15 +1252,6 @@ public final class PetRecallSelfTestService {
                 return ScenarioResult.running();
             }
 
-            if (this.phase == 3) {
-                if (suite.now() < this.retryAtTick) {
-                    return ScenarioResult.running();
-                }
-                suite.startTargetedRecall(suite.owner, List.of(this.record), true);
-                this.phase = 2;
-                return ScenarioResult.running();
-            }
-
             RecallSummary summary = suite.takeSummary();
             if (summary == null) {
                 return ScenarioResult.running();
@@ -1337,13 +1269,6 @@ public final class PetRecallSelfTestService {
                 return ScenarioResult.running();
             }
 
-            if (suite.isTransientUnloadedMiss(summary, this.petUuid) && this.ownerRetries < 2) {
-                this.ownerRetries++;
-                this.retryAtTick = suite.now() + UNLOADED_RETRY_DELAY_TICKS;
-                this.phase = 3;
-                suite.report("Retrying owner unloaded recall after transient chunk miss (" + this.ownerRetries + "/2)");
-                return ScenarioResult.running();
-            }
 
             Entity recalled = suite.getLoadedPet(this.petUuid);
             if (summary.recalled != 1 || recalled == null) {

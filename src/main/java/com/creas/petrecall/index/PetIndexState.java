@@ -10,7 +10,6 @@ import java.util.HashSet;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
-import net.minecraft.datafixer.DataFixTypes;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.world.PersistentState;
 import net.minecraft.world.PersistentStateManager;
@@ -23,7 +22,7 @@ public final class PetIndexState extends PersistentState {
             "pet_recall_index",
             PetIndexState::new,
             PETS_CODEC.xmap(PetIndexState::new, PetIndexState::copyPetMap),
-            DataFixTypes.SAVED_DATA_COMMAND_STORAGE
+            null
     );
 
     private final Map<UUID, PetRecord> pets;

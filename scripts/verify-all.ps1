@@ -141,7 +141,7 @@ function Invoke-VersionVerify {
 
     $scriptLines = @(
         '$ErrorActionPreference = ''Stop'''
-        ('& ''{0}'' ''runGameTest'' ''--no-daemon'' ''-Pminecraft_version={1}'' ''-Pyarn_mappings={2}'' ''-Ploader_version={3}'' ''-Pfabric_version={4}'' ''-Pmod_version={5}''' -f $GradlePath, $Target.version, $Target.yarn, $Target.loader, $Target.fabric_api, $Target.mod_version)
+        ('& ''{0}'' ''test'' ''runGameTest'' ''--no-daemon'' ''-Pminecraft_version={1}'' ''-Pyarn_mappings={2}'' ''-Ploader_version={3}'' ''-Pfabric_version={4}'' ''-Pmod_version={5}''' -f $GradlePath, $Target.version, $Target.yarn, $Target.loader, $Target.fabric_api, $Target.mod_version)
         'exit $LASTEXITCODE'
     )
     [System.IO.File]::WriteAllLines($runnerScript, $scriptLines)
@@ -179,17 +179,8 @@ function Invoke-VersionVerify {
 
             $stdoutText = if (Test-Path -LiteralPath $stdoutLog) { Get-Content -LiteralPath $stdoutLog -Raw } else { "" }
             $stderrText = if (Test-Path -LiteralPath $stderrLog) { Get-Content -LiteralPath $stderrLog -Raw } else { "" }
-            $hasBuildSuccess = $stdoutText -match "BUILD SUCCESSFUL"
             $hasBuildFailure = $stdoutText -match "BUILD FAILED" -or $stderrText -match "BUILD FAILED"
-            $hasGameTestSuccess = $stdoutText -match "All \d+ required tests passed"
             $hasGameTestFailure = $stdoutText -match "\d+ required tests failed"
-
-            if (($hasGameTestSuccess -or $hasBuildSuccess) -and -not $hasGameTestFailure -and -not $hasBuildFailure) {
-                $status = "passed"
-                $exitCode = 0
-                Stop-ProcessTree -RootIds @($process.Id)
-                break
-            }
 
             if ($hasGameTestFailure -or $hasBuildFailure) {
                 $status = "failed"
@@ -201,10 +192,16 @@ function Invoke-VersionVerify {
             if ($process.HasExited) {
                 $process.WaitForExit()
                 $exitCode = $process.ExitCode
-                if ($exitCode -ne 0) {
-                    $status = "failed"
-                } else {
+                $finalStdout = Get-Content -LiteralPath $stdoutLog -Raw -Encoding UTF8
+                $finalStderr = if (Test-Path -LiteralPath $stderrLog) { Get-Content -LiteralPath $stderrLog -Raw -Encoding UTF8 } else { "" }
+                $testsRan = $finalStdout -match "All [1-9][0-9]* required tests passed"
+                $buildPassed = $finalStdout -match "BUILD SUCCESSFUL"
+                $testsFailed = $finalStdout -match "[1-9][0-9]* required tests failed"
+                $buildFailed = $finalStdout -match "BUILD FAILED" -or $finalStderr -match "BUILD FAILED"
+                if ($exitCode -eq 0 -and $testsRan -and $buildPassed -and -not $testsFailed -and -not $buildFailed) {
                     $status = "passed"
+                } else {
+                    $status = "failed"
                 }
                 break
             }

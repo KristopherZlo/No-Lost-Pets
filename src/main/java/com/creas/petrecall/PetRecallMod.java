@@ -6,6 +6,7 @@ import com.creas.petrecall.runtime.AutoPetRecallController;
 import com.creas.petrecall.runtime.PetTracker;
 import com.creas.petrecall.selftest.PetRecallSelfTestService;
 import com.creas.petrecall.util.DebugTrace;
+import com.creas.petrecall.util.VersionCompat;
 import net.fabricmc.api.ModInitializer;
 import net.fabricmc.fabric.api.command.v2.CommandRegistrationCallback;
 import net.fabricmc.fabric.api.entity.event.v1.ServerEntityWorldChangeEvents;
@@ -42,15 +43,18 @@ public final class PetRecallMod implements ModInitializer {
 
     @Override
     public void onInitialize() {
+        VersionCompat.initialize();
         DebugTrace.startSession(MOD_ID);
         DebugTrace.log("lifecycle", "Registering NoLostPets event hooks");
         ServerEntityEvents.ENTITY_LOAD.register(TRACKER::onEntityLoad);
         ServerEntityEvents.ENTITY_UNLOAD.register(TRACKER::onEntityUnload);
+        ServerTickEvents.END_SERVER_TICK.register(RECALL_SERVICE::onServerTick);
         ServerTickEvents.END_SERVER_TICK.register(AUTO_RECALL::onServerTick);
         ServerTickEvents.END_SERVER_TICK.register(SELF_TEST::onServerTick);
         ServerPlayerEvents.JOIN.register(AUTO_RECALL::scheduleAfterJoin);
         ServerPlayerEvents.AFTER_RESPAWN.register((oldPlayer, newPlayer, alive) -> AUTO_RECALL.scheduleImmediate(newPlayer));
         ServerEntityWorldChangeEvents.AFTER_PLAYER_CHANGE_WORLD.register((player, origin, destination) -> AUTO_RECALL.scheduleImmediate(player));
+        ServerLifecycleEvents.SERVER_STOPPING.register(server -> RECALL_SERVICE.clearRuntime());
         ServerLifecycleEvents.SERVER_STOPPED.register(server -> {
             DebugTrace.log("lifecycle", "Server stopped; indexedPets=%d trackedLoaded=%d", TRACKER.getIndexedPetCount(server), TRACKER.getLoadedPetCount());
             TRACKER.clearRuntime();

@@ -7,11 +7,11 @@
 ![Environment](https://img.shields.io/badge/Environment-Server%20%26%20Singleplayer-1F6FEB?style=for-the-badge)
 ![License](https://img.shields.io/badge/License-GPL--3.0-2EA043?style=for-the-badge)
 
-> Pet recall without chunk loading.
+> Bring lost companion pets back to their owner.
 >
 > Safe. Automatic. Server-side. Built for real lost pets.
 
-NoLostPets is a Fabric mod for Minecraft `1.21.8` through `1.21.11` that brings companion pets back to their owner, including pets stored in unloaded chunks, without loading the original chunk first. It is built as one universal jar for the full `1.21.8-1.21.11` line.
+NoLostPets is a Fabric mod for Minecraft `1.21.8` through `1.21.11` that brings companion pets back to their owner, including pets stored in unloaded chunks. Recovery temporarily loads the source chunk through Minecraft, then teleports the existing entity. It is built as one universal jar for the full `1.21.8-1.21.11` line.
 
 For a shorter storefront-style description, see [MODRINTH_DESCRIPTION.md](MODRINTH_DESCRIPTION.md).
 
@@ -22,7 +22,7 @@ For a shorter storefront-style description, see [MODRINTH_DESCRIPTION.md](MODRIN
 - No minimap.
 - No client UI.
 - No teleporting random tamed mobs you do not own.
-- No source chunk loading just to recover a pet.
+- Recovers pets outside simulation distance.
 
 It is meant for companion-style pets that should follow a player but can end up stuck in unloaded chunks after travel, death, portals, or server movement.
 
@@ -35,17 +35,19 @@ NoLostPets is for servers and singleplayer worlds where:
 - pets get stranded far away
 - owners change dimension or respawn
 - travel unloads the original chunk
-- you want recovery without chunk-side effects in the source area
+- you want recovery of a pet outside simulation distance
 
 If the real problem is "my pet is lost somewhere outside simulation distance", this mod solves that problem directly.
 
 ## Features
 
-- Recalls supported pets from unloaded chunks without loading the source chunk.
+- Temporarily loads source chunks with loading-only tickets and recalls existing pets through Minecraft.
+- Loads at most four source chunks concurrently, with a 200-tick timeout per request.
 - Recalls already loaded pets too.
 - Uses safe vanilla-style placement checks near the owner.
 - Treats short grass as valid empty space and avoids water, fluids, and leaves.
 - Skips sitting pets.
+- Skips pets carrying passengers or riding another entity.
 - Blocks cross-dimension recall on purpose.
 - Preserves ownership checks for both loaded and unloaded recall paths.
 - Works automatically in the background for unloaded pets.
@@ -84,7 +86,7 @@ All commands require admin/operator permission.
 ### Recall Behavior
 
 - Loaded pets are teleported to a safe spot near the owner.
-- Unloaded pets are reconstructed from stored entity data and moved without loading the source chunk into active simulation.
+- Unloaded pets are loaded with a temporary loading-only ticket, then the existing entity is teleported. The recall ticket does not request simulation ticks.
 - Placement prefers safe walkable positions near the player.
 - Short grass is considered valid empty space, while water, fluids, and leaves are rejected.
 - If no valid safe spot exists, recall fails instead of spawning the pet into a bad location.
@@ -148,7 +150,7 @@ Singleplayer works because the integrated server runs the mod locally.
 
 ### Does this load the chunk where the pet was lost?
 
-No. The unloaded-chunk recall path moves entity data without loading the original chunk into active simulation.
+Yes, temporarily. Minecraft loads the source chunk and its entities. The recall ticket requests loading rather than simulation, and is removed after success, failure, or cancellation. Other tickets can still cause normal simulation there.
 
 ### Is this server-side?
 
@@ -214,7 +216,7 @@ Windows helper scripts are included for all supported versions:
 
 All test clients share the same runtime data in `run/shared`, including worlds, config, and `options.txt`, while still launching different Minecraft versions.
 
-`verify-all.ps1` runs the built-in `verify singleplayer` and `verify multiplayer` command-path suites headlessly across `1.21.8` through `1.21.11`, sequentially, and writes per-version logs to `build/tmp/verify-all/`.
+`verify-all.ps1` runs unit tests and GameTests, including the built-in `verify singleplayer` and `verify multiplayer` command suites, across `1.21.8` through `1.21.11`, sequentially. It requires a nonzero count of passed required GameTests, a successful Gradle build, and exit code zero. Logs are written to `build/tmp/verify-all/`.
 
 Release builds use `scripts/build-1.21x.ps1`. Each Minecraft target has its own `mod_version` in the script matrix, so hotfix versions can differ between game versions. By default the build is gated by two smoke checks per target before a jar is produced:
 

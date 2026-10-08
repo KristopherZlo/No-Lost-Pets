@@ -1,37 +1,33 @@
 package com.creas.petrecall.util;
 
 import com.mojang.authlib.GameProfile;
+import com.creas.petrecall.mixin.accessor.ServerWorldAccessor;
+import com.creas.petrecall.mixin.accessor.ServerConfigEntryAccessor;
+import java.lang.reflect.Constructor;
+import net.minecraft.registry.Registries;
+import net.minecraft.registry.Registry;
+import net.minecraft.server.world.ChunkTicketType;
+import net.minecraft.util.Identifier;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.lang.reflect.Modifier;
 import java.lang.reflect.RecordComponent;
-import java.util.Locale;
 import java.util.UUID;
-import java.util.concurrent.CompletableFuture;
-import java.util.function.Supplier;
-import net.fabricmc.loader.api.FabricLoader;
 import net.minecraft.entity.Entity;
-import net.minecraft.nbt.NbtCompound;
 import net.minecraft.server.command.ServerCommandSource;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.network.ServerPlayerEntity;
 import net.minecraft.server.world.ServerWorld;
 import net.minecraft.util.math.ChunkPos;
 import net.minecraft.world.World;
-import net.minecraft.world.storage.EntityChunkDataAccess;
-import it.unimi.dsi.fastutil.longs.LongSet;
 import org.jetbrains.annotations.Nullable;
 
 public final class VersionCompat {
-    private static final Supplier<NbtCompound> EMPTY_NBT_SUPPLIER = () -> null;
     private static final @Nullable Method GAME_PROFILE_GET_ID = findMethod(GameProfile.class, "getId");
     private static final @Nullable Method GAME_PROFILE_ID = findMethod(GameProfile.class, "id");
-    private static final @Nullable Method GAME_PROFILE_GET_NAME = findMethod(GameProfile.class, "getName");
-    private static final @Nullable Method GAME_PROFILE_NAME = findMethod(GameProfile.class, "name");
     private static final @Nullable Method ENTITY_WORLD_METHOD = findEntityWorldMethod();
-    private static final @Nullable Field ENTITY_WORLD_FIELD = findEntityWorldField();
-    private static final @Nullable Field ENTITY_CHUNK_STORAGE = findEntityChunkStorageField();
-    private static final @Nullable Field ENTITY_CHUNK_EMPTY_CHUNKS = findEntityChunkEmptyChunksField();
+    private static final @Nullable Field ENTITY_WORLD_FIELD = ENTITY_WORLD_METHOD == null ? findEntityWorldField() : null;
+    private static @Nullable ChunkTicketType recallTicket;
     private VersionCompat() {
     }
 
@@ -67,52 +63,69 @@ public final class VersionCompat {
             return true;
         }
 
-        for (String operatorName : server.getPlayerManager().getOpList().getNames()) {
-            if (namesMatch(getProfileName(profile), operatorName)) {
+        for (Object entry : server.getPlayerManager().getOpList().values()) {
+            Object key = ((ServerConfigEntryAccessor) entry).pet_recall$getKey();
+            if (matchesProfileKey(profile, key)) {
                 return true;
             }
         }
         return false;
     }
 
-    public static Object getChunkStorage(EntityChunkDataAccess dataAccess) {
-        Object storage = readField(dataAccess, ENTITY_CHUNK_STORAGE);
-        if (storage == null) {
-            throw new IllegalStateException("EntityChunkDataAccess storage field is unavailable");
+    public static void initialize() {
+        if (ENTITY_WORLD_METHOD == null && ENTITY_WORLD_FIELD == null) {
+            throw new IllegalStateException("Cannot identify the entity world on this Minecraft version");
         }
-        return storage;
+        if (recallTicket == null) {
+            recallTicket = Registry.register(Registries.TICKET_TYPE,
+                    Identifier.of("pet_recall", "recall"), createRecallTicket());
+        }
     }
 
-    public static LongSet getEmptyChunks(EntityChunkDataAccess dataAccess) {
-        Object emptyChunks = readField(dataAccess, ENTITY_CHUNK_EMPTY_CHUNKS);
-        if (emptyChunks instanceof LongSet longSet) {
-            return longSet;
+    private static ChunkTicketType createRecallTicket() {
+        // 1.21.8 uses (expiry, persist, use); 1.21.9+ uses (expiry, flags).
+        // UNKNOWN is a loading-only, non-persistent ticket on both lines.
+        try {
+            RecordComponent[] components = ChunkTicketType.class.getRecordComponents();
+            Class<?>[] types = new Class<?>[components.length];
+            Object[] values = new Object[components.length];
+            int expiryComponents = 0;
+            for (int i = 0; i < components.length; i++) {
+                types[i] = components[i].getType();
+                values[i] = components[i].getAccessor().invoke(ChunkTicketType.UNKNOWN);
+                if (types[i] == long.class) {
+                    values[i] = 240L;
+                    expiryComponents++;
+                }
+            }
+            boolean current = types.length == 2 && types[0] == long.class && types[1] == int.class;
+            boolean legacy = types.length == 3 && types[0] == long.class
+                    && types[1] == boolean.class && types[2].isEnum();
+            if (expiryComponents != 1 || (!current && !legacy)) {
+                throw new IllegalStateException("Unsupported chunk ticket layout");
+            }
+            Constructor<ChunkTicketType> constructor = ChunkTicketType.class.getConstructor(types);
+            return constructor.newInstance(values);
+        } catch (ReflectiveOperationException error) {
+            throw new IllegalStateException("Cannot create recall chunk ticket", error);
         }
-        throw new IllegalStateException("EntityChunkDataAccess emptyChunks field is unavailable");
     }
 
-    public static CompletableFuture<Void> clearChunkData(Object storage, ChunkPos chunkPos) {
-        Method supplierWrite = findStorageMethod(storage.getClass(), ChunkPos.class, Supplier.class);
-        if (supplierWrite != null) {
-            return invokeStorage(supplierWrite, storage, chunkPos, EMPTY_NBT_SUPPLIER);
+    public static void holdRecallChunk(ServerWorld world, ChunkPos pos) {
+        if (recallTicket == null) {
+            throw new IllegalStateException("Recall chunk ticket was not initialized");
         }
-        Method directNbtWrite = findStorageMethod(storage.getClass(), ChunkPos.class, NbtCompound.class);
-        if (directNbtWrite != null) {
-            return invokeStorage(directNbtWrite, storage, chunkPos, (NbtCompound) null);
-        }
-        throw new IllegalStateException("Unsupported chunk storage clear signature: " + storage.getClass().getName());
+        world.getChunkManager().addTicket(recallTicket, pos, 0);
     }
 
-    public static CompletableFuture<Void> writeChunkData(Object storage, ChunkPos chunkPos, NbtCompound chunkNbt) {
-        Method directNbtWrite = findStorageMethod(storage.getClass(), ChunkPos.class, NbtCompound.class);
-        if (directNbtWrite != null) {
-            return invokeStorage(directNbtWrite, storage, chunkPos, chunkNbt);
+    public static void releaseRecallChunk(ServerWorld world, ChunkPos pos) {
+        if (recallTicket != null) {
+            world.getChunkManager().removeTicket(recallTicket, pos, 0);
         }
-        Method supplierNbtWrite = findStorageMethod(storage.getClass(), ChunkPos.class, Supplier.class);
-        if (supplierNbtWrite != null) {
-            return invokeStorage(supplierNbtWrite, storage, chunkPos, (Supplier<NbtCompound>) () -> chunkNbt);
-        }
-        throw new IllegalStateException("Unsupported chunk storage write signature: " + storage.getClass().getName());
+    }
+
+    public static boolean areChunkEntitiesLoaded(ServerWorld world, ChunkPos pos) {
+        return ((ServerWorldAccessor) world).pet_recall$getEntityManager().isLoaded(pos.toLong());
     }
 
     @Nullable
@@ -134,14 +147,18 @@ public final class VersionCompat {
             }
         }
 
+        Method match = null;
         for (Method method : Entity.class.getMethods()) {
             if (method.getParameterCount() == 0
                     && World.class.isAssignableFrom(method.getReturnType())
                     && !Modifier.isStatic(method.getModifiers())) {
-                return method;
+                if (match != null) {
+                    return null;
+                }
+                match = method;
             }
         }
-        return null;
+        return match;
     }
 
     @Nullable
@@ -160,117 +177,22 @@ public final class VersionCompat {
     @Nullable
     private static Field findEntityWorldField() {
         Class<?> owner = Entity.class;
+        Field match = null;
         while (owner != null) {
             for (Field field : owner.getDeclaredFields()) {
                 if (World.class.isAssignableFrom(field.getType()) && !Modifier.isStatic(field.getModifiers())) {
-                    field.setAccessible(true);
-                    return field;
+                    if (match != null) {
+                        return null;
+                    }
+                    match = field;
                 }
             }
             owner = owner.getSuperclass();
         }
-        return null;
-    }
-
-    @Nullable
-    private static Field findEntityChunkStorageField() {
-        Field mapped = findMappedMinecraftField(
-                EntityChunkDataAccess.class,
-                "net.minecraft.world.storage.EntityChunkDataAccess",
-                "storage",
-                "Lnet/minecraft/world/storage/VersionedChunkStorage;",
-                "Lnet/minecraft/world/storage/ChunkPosKeyedStorage;"
-        );
-        if (mapped != null) {
-            return mapped;
+        if (match != null) {
+            match.setAccessible(true);
         }
-
-        for (Field field : EntityChunkDataAccess.class.getDeclaredFields()) {
-            if (Modifier.isStatic(field.getModifiers())) {
-                continue;
-            }
-            Class<?> fieldType = field.getType();
-            if (findStorageMethod(fieldType, ChunkPos.class, Supplier.class) != null
-                    || findStorageMethod(fieldType, ChunkPos.class, NbtCompound.class) != null) {
-                field.setAccessible(true);
-                return field;
-            }
-        }
-        return null;
-    }
-
-    @Nullable
-    private static Field findEntityChunkEmptyChunksField() {
-        Field mapped = findMappedMinecraftField(
-                EntityChunkDataAccess.class,
-                "net.minecraft.world.storage.EntityChunkDataAccess",
-                "emptyChunks",
-                "Lit/unimi/dsi/fastutil/longs/LongSet;"
-        );
-        return mapped != null ? mapped : findFieldByType(EntityChunkDataAccess.class, LongSet.class);
-    }
-
-    @Nullable
-    private static Field findMappedMinecraftField(Class<?> owner, String ownerNamedName, String namedField, String... descriptors) {
-        Field direct = findField(owner, namedField);
-        if (direct != null) {
-            return direct;
-        }
-
-        for (String descriptor : descriptors) {
-            try {
-                String runtimeName = FabricLoader.getInstance()
-                        .getMappingResolver()
-                        .mapFieldName("named", ownerNamedName, namedField, descriptor);
-                if (!runtimeName.equals(namedField)) {
-                    Field mapped = findField(owner, runtimeName);
-                    if (mapped != null) {
-                        return mapped;
-                    }
-                }
-            } catch (RuntimeException | LinkageError ignored) {
-                // Fabric mappings may be unavailable in isolated unit tests.
-            }
-        }
-        return null;
-    }
-
-    @Nullable
-    private static Field findField(Class<?> owner, String name) {
-        try {
-            Field field = owner.getDeclaredField(name);
-            field.setAccessible(true);
-            return field;
-        } catch (ReflectiveOperationException | RuntimeException ignored) {
-            return null;
-        }
-    }
-
-    @Nullable
-    private static Field findFieldByType(Class<?> owner, Class<?> type) {
-        for (Field field : owner.getDeclaredFields()) {
-            if (type.isAssignableFrom(field.getType()) && !Modifier.isStatic(field.getModifiers())) {
-                field.setAccessible(true);
-                return field;
-            }
-        }
-        return null;
-    }
-
-    @Nullable
-    private static Method findStorageMethod(Class<?> owner, Class<?> firstParameterType, Class<?> secondParameterType) {
-        for (Method method : owner.getMethods()) {
-            if (!CompletableFuture.class.isAssignableFrom(method.getReturnType())) {
-                continue;
-            }
-            Class<?>[] parameterTypes = method.getParameterTypes();
-            if (parameterTypes.length == 2
-                    && parameterTypes[0] == firstParameterType
-                    && parameterTypes[1] == secondParameterType) {
-                return method;
-            }
-        }
-        return null;
+        return match;
     }
 
     @Nullable
@@ -302,62 +224,18 @@ public final class VersionCompat {
         }
     }
 
-    @SuppressWarnings("unchecked")
-    private static CompletableFuture<Void> invokeStorage(Method method, Object storage, Object... args) {
-        try {
-            return (CompletableFuture<Void>) method.invoke(storage, args);
-        } catch (ReflectiveOperationException e) {
-            throw new IllegalStateException("Failed to invoke storage method " + method.getName(), e);
-        }
-    }
-
     static boolean matchesProfileKey(GameProfile profile, @Nullable Object key) {
         if (key instanceof GameProfile gameProfile) {
             return matchesProfile(profile, gameProfile);
         }
-        if (key == null) {
-            return false;
-        }
-
-        UUID keyUuid = extractRecordUuid(key);
-        UUID profileUuid = getProfileId(profile);
-        if (keyUuid != null && profileUuid != null && profileUuid.equals(keyUuid)) {
-            return true;
-        }
-
-        String keyName = extractRecordName(key);
-        return namesMatch(getProfileName(profile), keyName);
+        Object id = key == null ? null : readRecordComponentByType(key, UUID.class);
+        UUID profileId = getProfileId(profile);
+        return profileId != null && profileId.equals(id);
     }
 
     private static boolean matchesProfile(GameProfile expected, @Nullable GameProfile actual) {
-        if (actual == null) {
-            return false;
-        }
         UUID expectedId = getProfileId(expected);
-        UUID actualId = getProfileId(actual);
-        if (expectedId != null && actualId != null && expectedId.equals(actualId)) {
-            return true;
-        }
-        return namesMatch(getProfileName(expected), getProfileName(actual));
-    }
-
-    private static boolean namesMatch(@Nullable String first, @Nullable String second) {
-        if (first == null || second == null) {
-            return false;
-        }
-        return first.toLowerCase(Locale.ROOT).equals(second.toLowerCase(Locale.ROOT));
-    }
-
-    @Nullable
-    private static UUID extractRecordUuid(Object key) {
-        Object value = readRecordComponentByType(key, UUID.class);
-        return value instanceof UUID uuid ? uuid : null;
-    }
-
-    @Nullable
-    private static String extractRecordName(Object key) {
-        Object value = readRecordComponentByType(key, String.class);
-        return value instanceof String string ? string : null;
+        return actual != null && expectedId != null && expectedId.equals(getProfileId(actual));
     }
 
     @Nullable
@@ -367,11 +245,20 @@ public final class VersionCompat {
             return null;
         }
         try {
+            RecordComponent match = null;
             for (RecordComponent component : keyClass.getRecordComponents()) {
                 if (component.getType() != type) {
                     continue;
                 }
-                return component.getAccessor().invoke(recordLike);
+                if (match != null) {
+                    return null;
+                }
+                match = component;
+            }
+            if (match != null) {
+                Method accessor = match.getAccessor();
+                accessor.setAccessible(true);
+                return accessor.invoke(recordLike);
             }
         } catch (ReflectiveOperationException e) {
             throw new IllegalStateException("Failed to inspect record key " + keyClass.getName(), e);
@@ -388,12 +275,4 @@ public final class VersionCompat {
         return value instanceof UUID uuid ? uuid : null;
     }
 
-    @Nullable
-    private static String getProfileName(GameProfile profile) {
-        Object value = invokeNoArgs(profile, GAME_PROFILE_GET_NAME);
-        if (value == null) {
-            value = invokeNoArgs(profile, GAME_PROFILE_NAME);
-        }
-        return value instanceof String string ? string : null;
-    }
 }
