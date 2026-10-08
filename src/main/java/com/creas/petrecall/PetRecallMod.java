@@ -9,7 +9,7 @@ import com.creas.petrecall.util.DebugTrace;
 import com.creas.petrecall.util.VersionCompat;
 import net.fabricmc.api.ModInitializer;
 import net.fabricmc.fabric.api.command.v2.CommandRegistrationCallback;
-import net.fabricmc.fabric.api.entity.event.v1.ServerEntityWorldChangeEvents;
+import net.fabricmc.fabric.api.entity.event.v1.ServerEntityLevelChangeEvents;
 import net.fabricmc.fabric.api.entity.event.v1.ServerPlayerEvents;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerEntityEvents;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerLifecycleEvents;
@@ -53,7 +53,7 @@ public final class PetRecallMod implements ModInitializer {
         ServerTickEvents.END_SERVER_TICK.register(SELF_TEST::onServerTick);
         ServerPlayerEvents.JOIN.register(AUTO_RECALL::scheduleAfterJoin);
         ServerPlayerEvents.AFTER_RESPAWN.register((oldPlayer, newPlayer, alive) -> AUTO_RECALL.scheduleImmediate(newPlayer));
-        ServerEntityWorldChangeEvents.AFTER_PLAYER_CHANGE_WORLD.register((player, origin, destination) -> AUTO_RECALL.scheduleImmediate(player));
+        ServerEntityLevelChangeEvents.AFTER_PLAYER_CHANGE_LEVEL.register((player, origin, destination) -> AUTO_RECALL.scheduleImmediate(player));
         ServerLifecycleEvents.SERVER_STOPPING.register(server -> RECALL_SERVICE.clearRuntime());
         ServerLifecycleEvents.SERVER_STOPPED.register(server -> {
             DebugTrace.log("lifecycle", "Server stopped; indexedPets=%d trackedLoaded=%d", TRACKER.getIndexedPetCount(server), TRACKER.getLoadedPetCount());

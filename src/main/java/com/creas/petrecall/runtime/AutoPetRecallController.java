@@ -158,7 +158,7 @@ public final class AutoPetRecallController {
         PlayerAutoState state = this.playerStates.computeIfAbsent(playerUuid, ignored -> new PlayerAutoState());
         this.maybeRunJoinRepair(server, player, state, now);
 
-        long currentChunk = player.chunkPosition().toLong();
+        long currentChunk = player.chunkPosition().pack();
         String currentDimension = VersionCompat.getDimensionId(player);
         boolean onGround = PetRecallService.isPlayerGroundedForRecall(player);
         double currentX = player.getX();

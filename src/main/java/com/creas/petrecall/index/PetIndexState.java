@@ -13,13 +13,13 @@ import java.util.UUID;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.world.level.saveddata.SavedData;
 import net.minecraft.world.level.saveddata.SavedDataType;
-import net.minecraft.world.level.storage.DimensionDataStorage;
+import net.minecraft.world.level.storage.SavedDataStorage;
 import org.jetbrains.annotations.Nullable;
 
 public final class PetIndexState extends SavedData {
     private static final Codec<Map<UUID, PetRecord>> PETS_CODEC = Codec.unboundedMap(net.minecraft.core.UUIDUtil.AUTHLIB_CODEC, PetRecord.CODEC);
     public static final SavedDataType<PetIndexState> TYPE = new SavedDataType<>(
-            "pet_recall_index",
+            net.minecraft.resources.Identifier.fromNamespaceAndPath("pet_recall", "pet_recall_index"),
             PetIndexState::new,
             PETS_CODEC.xmap(PetIndexState::new, PetIndexState::copyPetMap),
             null
@@ -51,7 +51,7 @@ public final class PetIndexState extends SavedData {
     }
 
     public static PetIndexState get(MinecraftServer server) {
-        DimensionDataStorage manager = server.overworld().getDataStorage();
+        SavedDataStorage manager = server.overworld().getDataStorage();
         return manager.computeIfAbsent(TYPE);
     }
 

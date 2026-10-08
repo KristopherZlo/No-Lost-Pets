@@ -44,7 +44,7 @@ public record PetRecord(
                 ownerUuid,
                 BuiltInRegistries.ENTITY_TYPE.getKey(entity.getType()).toString(),
                 world.dimension().identifier().toString(),
-                entity.chunkPosition().toLong(),
+                entity.chunkPosition().pack(),
                 entity.getX(),
                 entity.getY(),
                 entity.getZ(),
@@ -54,7 +54,7 @@ public record PetRecord(
     }
 
     public ChunkPos chunkPos() {
-        return new ChunkPos(this.chunkPosLong);
+        return ChunkPos.unpack(this.chunkPosLong);
     }
 
     @Nullable

@@ -190,7 +190,7 @@ public final class PetRecallBehaviorGameTests {
         Wolf wolf = f.wolf(new BlockPos(1, 2, 1));
         UUID missingUuid = UUID.randomUUID();
         PetRecord pending = new PetRecord(missingUuid, f.player.getUUID(), "minecraft:wolf",
-                f.world.dimension().identifier().toString(), new ChunkPos(1000, 1000).toLong(),
+                f.world.dimension().identifier().toString(), new ChunkPos(1000, 1000).pack(),
                 16000.5D, wolf.getY(), 16000.5D, false, 20.0F);
         PetIndexState.get(f.world.getServer()).put(pending);
         AtomicInteger callbacks = new AtomicInteger();
@@ -247,8 +247,8 @@ public final class PetRecallBehaviorGameTests {
         Fixture f = new Fixture(context);
         ChunkPos chunk = new ChunkPos(4096 + REMOTE_CHUNK_SEQUENCE.getAndIncrement() * 4, 4096);
         BlockPos remote = new BlockPos(chunk.getMinBlockX() + 8, f.player.blockPosition().getY(), chunk.getMinBlockZ() + 8);
-        f.world.setChunkForced(chunk.x, chunk.z, true);
-        f.world.getChunk(chunk.x, chunk.z);
+        f.world.setChunkForced(chunk.x(), chunk.z(), true);
+        f.world.getChunk(chunk.x(), chunk.z());
         for (int x = -2; x <= 2; x++) {
             for (int z = -2; z <= 2; z++) {
                 f.world.setBlockAndUpdate(remote.offset(x, -1, z), Blocks.STONE.defaultBlockState());
@@ -292,7 +292,7 @@ public final class PetRecallBehaviorGameTests {
                     original.set(wolf);
                     neighbor.set(pig);
                     record.set(f.record(wolf));
-                    f.world.setChunkForced(chunk.x, chunk.z, false);
+                    f.world.setChunkForced(chunk.x(), chunk.z(), false);
                     phase.set(1);
                     return;
                 }
@@ -327,7 +327,7 @@ public final class PetRecallBehaviorGameTests {
                 if (phase.get() == 3) {
                     if (VersionCompat.areChunkEntitiesLoaded(f.world, chunk)) return;
                     check(context, f.world.getEntity(neighborUuid) == null, "Neighbor must unload before second disk read");
-                    f.world.setChunkForced(chunk.x, chunk.z, true);
+                    f.world.setChunkForced(chunk.x(), chunk.z(), true);
                     phase.set(4);
                     return;
                 }
@@ -338,11 +338,11 @@ public final class PetRecallBehaviorGameTests {
                 check(context, countUuid(f.world, neighborUuid) == 1, "A second disk read must not duplicate neighbor UUID");
                 Entity wolf = f.world.getEntity(uuid);
                 Entity pig = f.world.getEntity(neighborUuid);
-                f.world.setChunkForced(chunk.x, chunk.z, false);
+                f.world.setChunkForced(chunk.x(), chunk.z(), false);
                 f.cleanup(wolf, pig);
                 context.succeed();
             } catch (RuntimeException | AssertionError error) {
-                f.world.setChunkForced(chunk.x, chunk.z, false);
+                f.world.setChunkForced(chunk.x(), chunk.z(), false);
                 f.service.clearRuntime();
                 throw error;
             }
@@ -357,13 +357,13 @@ public final class PetRecallBehaviorGameTests {
         context.assertValueEqual(7.0F, wolf.getHealth(), Component.literal("Health survives disk round trip"));
         context.assertValueEqual(DyeColor.BLUE, wolf.getCollarColor(), Component.literal("Collar survives"));
         context.assertValueEqual("Round-trip wolf", wolf.getCustomName().getString(), Component.literal("Name survives"));
-        check(context, wolf.getTags().contains("pet_recall_state_marker"), "Unknown/custom state survives");
+        check(context, wolf.entityTags().contains("pet_recall_state_marker"), "Unknown/custom state survives");
         check(context, wolf.isNoAi() && wolf.isOrderedToSit() == sitting, "AI and sitting state survive");
         if (sitting) {
             context.assertValueEqual(remote, wolf.blockPosition(), Component.literal("Sitting pet must stay at source"));
         } else {
             check(context, wolf.distanceToSqr(f.player) <= 64.0D, "Recalled pet stays near owner");
-            check(context, !wolf.chunkPosition().equals(new ChunkPos(remote)), "Source file must not recreate recalled pet");
+            check(context, !wolf.chunkPosition().equals(ChunkPos.containing(remote)), "Source file must not recreate recalled pet");
         }
         check(context, PetIndexState.get(f.world.getServer()).getPet(uuid) != null, "Pet remains indexed");
     }
@@ -374,7 +374,7 @@ public final class PetRecallBehaviorGameTests {
         Pig pig = (Pig) entity;
         context.assertValueEqual(5.0F, pig.getHealth(), Component.literal("Neighbor health must not change"));
         context.assertValueEqual(remote.offset(1, 0, 0), pig.blockPosition(), Component.literal("Neighbor must not move"));
-        check(context, pig.getTags().contains("neighbor_marker"), "Neighbor custom state must survive");
+        check(context, pig.entityTags().contains("neighbor_marker"), "Neighbor custom state must survive");
     }
 
     private static long countUuid(ServerLevel world, UUID uuid) {

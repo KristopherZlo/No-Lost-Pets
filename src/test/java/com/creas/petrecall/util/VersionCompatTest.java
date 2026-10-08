@@ -5,6 +5,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.mojang.authlib.GameProfile;
 import java.util.UUID;
+import net.minecraft.server.players.NameAndId;
 import org.junit.jupiter.api.Test;
 
 final class VersionCompatTest {
@@ -22,9 +23,9 @@ final class VersionCompatTest {
         UUID uuid = UUID.randomUUID();
         GameProfile player = new GameProfile(uuid, "PlayerOne");
 
-        assertTrue(VersionCompat.matchesProfileKey(player, new ProfileKey(uuid, "SomeoneElse")));
-        assertFalse(VersionCompat.matchesProfileKey(player, new ProfileKey(UUID.randomUUID(), "playerone")));
-        assertFalse(VersionCompat.matchesProfileKey(player, new ProfileKey(UUID.randomUUID(), "DifferentName")));
+        assertTrue(VersionCompat.matchesProfileKey(player, new NameAndId(uuid, "SomeoneElse")));
+        assertFalse(VersionCompat.matchesProfileKey(player, new NameAndId(UUID.randomUUID(), "playerone")));
+        assertFalse(VersionCompat.matchesProfileKey(player, new NameAndId(UUID.randomUUID(), "DifferentName")));
     }
 
     @Test

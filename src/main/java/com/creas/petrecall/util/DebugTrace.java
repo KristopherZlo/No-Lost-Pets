@@ -160,7 +160,7 @@ public final class DebugTrace {
         if (!ENABLED) {
             return "";
         }
-        return chunkPos + " long=" + chunkPos.toLong();
+        return chunkPos + " long=" + chunkPos.pack();
     }
 
     public static String describePetUuid(UUID petUuid) {
