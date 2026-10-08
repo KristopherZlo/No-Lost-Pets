@@ -8,6 +8,8 @@ run/
 *.log
 MANUAL_TESTS.md
 CHANGELOG.md
+/BEHAVIOR_TESTS.md
+/UPGRADE_PLAN_26X.md
 /icon.png
 *javap*.txt
 *_tmp*.txt
