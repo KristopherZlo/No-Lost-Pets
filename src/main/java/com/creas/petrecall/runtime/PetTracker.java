@@ -58,13 +58,13 @@ public final class PetTracker {
             DebugTrace.log("tracker", "Ignoring entity without supported companion ownership: %s", DebugTrace.describeEntity(entity));
             this.loadedPets.remove(entity.getUUID(), entity);
             PetRecallMod.getRecallService().onPetRemoved(entity.getUUID());
-            if (server != null) {
+            if (server != null && PetIndexState.isAvailable(server)) {
                 PetIndexState.get(server).remove(entity.getUUID());
             }
             return;
         }
 
-        if (server == null) {
+        if (server == null || !PetIndexState.isAvailable(server)) {
             return;
         }
 
@@ -87,14 +87,14 @@ public final class PetTracker {
     }
 
     public Collection<PetRecord> getOwnerRecords(MinecraftServer server, UUID ownerUuid) {
-        return PetIndexState.get(server).getPetsForOwner(ownerUuid);
+        return PetIndexState.isAvailable(server) ? PetIndexState.get(server).getPetsForOwner(ownerUuid) : java.util.List.of();
     }
 
     public void removeRecord(MinecraftServer server, UUID petUuid) {
         DebugTrace.log("tracker", "Removing indexed pet record manually: %s", DebugTrace.describePetUuid(petUuid));
         this.loadedPets.remove(petUuid);
         PetRecallMod.getRecallService().onPetRemoved(petUuid);
-        PetIndexState.get(server).remove(petUuid);
+        if (PetIndexState.isAvailable(server)) PetIndexState.get(server).remove(petUuid);
     }
 
     public void upsertRecordFromEntity(ServerLevel world, Entity entity) {
@@ -102,6 +102,7 @@ public final class PetTracker {
     }
 
     public int rescanLoadedPetsForOwner(MinecraftServer server, UUID ownerUuid) {
+        if (!PetIndexState.isAvailable(server)) return 0;
         DebugTrace.log("tracker", "Starting loaded pet rescan for owner=%s", ownerUuid);
         int found = 0;
         for (ServerLevel world : server.getAllLevels()) {
@@ -128,6 +129,6 @@ public final class PetTracker {
     }
 
     public int getIndexedPetCount(MinecraftServer server) {
-        return PetIndexState.get(server).size();
+        return PetIndexState.isAvailable(server) ? PetIndexState.get(server).size() : -1;
     }
 }

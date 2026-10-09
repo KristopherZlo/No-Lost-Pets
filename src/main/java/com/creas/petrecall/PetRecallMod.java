@@ -1,6 +1,7 @@
 package com.creas.petrecall;
 
 import com.creas.petrecall.command.PetRecallCommand;
+import com.creas.petrecall.index.PetIndexState;
 import com.creas.petrecall.recall.PetRecallService;
 import com.creas.petrecall.runtime.AutoPetRecallController;
 import com.creas.petrecall.runtime.PetTracker;
@@ -54,11 +55,15 @@ public final class PetRecallMod implements ModInitializer {
         ServerPlayerEvents.JOIN.register(AUTO_RECALL::scheduleAfterJoin);
         ServerPlayerEvents.AFTER_RESPAWN.register((oldPlayer, newPlayer, alive) -> AUTO_RECALL.scheduleImmediate(newPlayer));
         ServerEntityLevelChangeEvents.AFTER_PLAYER_CHANGE_LEVEL.register((player, origin, destination) -> AUTO_RECALL.scheduleImmediate(player));
-        ServerLifecycleEvents.SERVER_STOPPING.register(server -> RECALL_SERVICE.clearRuntime());
+        ServerLifecycleEvents.SERVER_STOPPING.register(server -> {
+            SELF_TEST.cancel("Server stopping.");
+            RECALL_SERVICE.clearRuntime();
+        });
         ServerLifecycleEvents.SERVER_STOPPED.register(server -> {
             DebugTrace.log("lifecycle", "Server stopped; indexedPets=%d trackedLoaded=%d", TRACKER.getIndexedPetCount(server), TRACKER.getLoadedPetCount());
             TRACKER.clearRuntime();
             AUTO_RECALL.clearRuntime();
+            PetIndexState.clearSession(server);
             DebugTrace.stopSession("server stopped");
         });
         CommandRegistrationCallback.EVENT.register(PetRecallCommand::register);

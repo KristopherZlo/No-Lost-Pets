@@ -1,6 +1,7 @@
 package com.creas.petrecall.runtime;
 
 import com.creas.petrecall.index.PetRecord;
+import com.creas.petrecall.index.PetIndexState;
 import com.creas.petrecall.recall.PetRecallService.RecallSummary;
 import com.creas.petrecall.recall.PetRecallService;
 import com.creas.petrecall.util.DebugTrace;
@@ -40,7 +41,7 @@ public final class AutoPetRecallController {
     }
 
     public void onServerTick(MinecraftServer server) {
-        if (server.overworld() == null) {
+        if (server.overworld() == null || !PetIndexState.isAvailable(server)) {
             return;
         }
 

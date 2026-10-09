@@ -148,6 +148,14 @@ public final class PetRecallService {
             return false;
         }
 
+        if (!PetIndexState.isAvailable(server)) {
+            RecallSummary summary = new RecallSummary(collectMessages);
+            summary.messages.add("Pet index is unavailable; see the server log. No pets were moved.");
+            summary.failed = 1;
+            this.notifyComplete(onComplete, summary);
+            return false;
+        }
+
         UUID playerUuid = player.getUUID();
         synchronized (this.activeRecalls) {
             if (!this.activeRecalls.add(playerUuid)) {

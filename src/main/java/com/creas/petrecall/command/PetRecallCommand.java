@@ -50,6 +50,7 @@ public final class PetRecallCommand {
     }
 
     private static int executeForce(CommandContext<CommandSourceStack> context) throws CommandSyntaxException {
+        if (!requireIndex(context.getSource())) return 0;
         ServerPlayer player = EntityArgument.getPlayer(context, "player");
         CommandSourceStack source = context.getSource();
         DebugTrace.log("command", "force %s source=%s", DebugTrace.describePlayer(player), source.getTextName());
@@ -90,6 +91,7 @@ public final class PetRecallCommand {
     }
 
     private static int executeRescan(CommandContext<CommandSourceStack> context) throws CommandSyntaxException {
+        if (!requireIndex(context.getSource())) return 0;
         ServerPlayer player = EntityArgument.getPlayer(context, "player");
         DebugTrace.log("command", "rescan %s source=%s", DebugTrace.describePlayer(player), context.getSource().getTextName());
         int found = getService().rescanLoadedForPlayer(player);
@@ -117,6 +119,7 @@ public final class PetRecallCommand {
     }
 
     private static int executeVerifySingleplayer(CommandContext<CommandSourceStack> context) throws CommandSyntaxException {
+        if (!requireIndex(context.getSource())) return 0;
         ServerPlayer player = getSourcePlayer(context.getSource());
         boolean started = PetRecallMod.getSelfTestService().startSingleplayer(player, text -> context.getSource().sendSuccess(() -> text, false));
         if (!started) {
@@ -128,6 +131,7 @@ public final class PetRecallCommand {
     }
 
     private static int executeVerifyMultiplayer(CommandContext<CommandSourceStack> context) throws CommandSyntaxException {
+        if (!requireIndex(context.getSource())) return 0;
         CommandSourceStack source = context.getSource();
         ServerPlayer owner = getSourcePlayer(source);
         ServerPlayer otherPlayer = EntityArgument.getPlayer(context, "otherPlayer");
@@ -161,6 +165,7 @@ public final class PetRecallCommand {
     }
 
     private static int sendStats(CommandSourceStack source, ServerPlayer player) {
+        if (!requireIndex(source)) return 0;
         long now = source.getServer().overworld() == null ? 0L : source.getServer().overworld().getGameTime();
         DebugStats stats = getService().getDebugStats(now);
         int ownerRecords = PetRecallMod.getTracker().getOwnerRecords(source.getServer(), player.getUUID()).size();
@@ -179,6 +184,7 @@ public final class PetRecallCommand {
     }
 
     private static int sendGlobalStats(CommandSourceStack source) {
+        if (!requireIndex(source)) return 0;
         long now = source.getServer().overworld() == null ? 0L : source.getServer().overworld().getGameTime();
         DebugStats stats = getService().getDebugStats(now);
         int indexed = PetIndexState.get(source.getServer()).size();
@@ -194,6 +200,12 @@ public final class PetRecallCommand {
                         ", quarantined=" + stats.quarantinedPets()
         ), false);
         return indexed;
+    }
+
+    private static boolean requireIndex(CommandSourceStack source) {
+        if (PetIndexState.isAvailable(source.getServer())) return true;
+        source.sendFailure(Component.literal("NoLostPets index is unavailable. See the server log; repair the file and restart."));
+        return false;
     }
 
     private static PetRecallService getService() {
