@@ -1,3 +1,5 @@
+> This is the legacy 1.21.x storefront description. The `mc-26x` branch contains Minecraft 26 candidates with gameplay verification pending.
+
 # NoLostPets
 
 ![NoLostPets banner](banner.png)

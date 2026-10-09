@@ -10,60 +10,7 @@ param(
 
 $ErrorActionPreference = "Stop"
 
-$matrix = @{
-    "1.21.8" = @{
-        yarn = "1.21.8+build.1"
-        loader = "0.18.2"
-        fabric_api = "0.136.1+1.21.8"
-        mod_version = "1.1.1"
-    }
-    "1.21.9" = @{
-        yarn = "1.21.9+build.1"
-        loader = "0.18.2"
-        fabric_api = "0.134.1+1.21.9"
-        mod_version = "1.1.1"
-    }
-    "1.21.10" = @{
-        yarn = "1.21.10+build.3"
-        loader = "0.18.2"
-        fabric_api = "0.138.4+1.21.10"
-        mod_version = "1.1.1"
-    }
-    "1.21.11" = @{
-        yarn = "1.21.11+build.4"
-        loader = "0.18.2"
-        fabric_api = "0.141.3+1.21.11"
-        mod_version = "1.1.1"
-    }
-}
-
-function Resolve-JavaHome {
-    param([string]$PreferredJavaHome)
-
-    $candidates = @()
-    if ($PreferredJavaHome) {
-        $candidates += $PreferredJavaHome
-    }
-    $candidates += Get-ChildItem "C:\Program Files\Eclipse Adoptium" -Directory -ErrorAction SilentlyContinue |
-        Where-Object { $_.Name -like "jdk-21*" } |
-        Sort-Object Name -Descending |
-        Select-Object -ExpandProperty FullName
-    $candidates += Get-ChildItem "C:\Program Files\Java" -Directory -ErrorAction SilentlyContinue |
-        Where-Object { $_.Name -like "jdk-21*" } |
-        Sort-Object Name -Descending |
-        Select-Object -ExpandProperty FullName
-    if ($env:JAVA_HOME) {
-        $candidates += $env:JAVA_HOME
-    }
-
-    foreach ($candidate in $candidates | Select-Object -Unique) {
-        if ($candidate -and (Test-Path (Join-Path $candidate "bin\java.exe"))) {
-            return $candidate
-        }
-    }
-
-    throw "JDK 21 was not found. Pass -JavaHome or install JDK 21."
-}
+. (Join-Path $PSScriptRoot "versions.ps1")
 
 function Get-ProcessTreeIds {
     param([int[]]$RootIds)
@@ -100,26 +47,6 @@ function Stop-ProcessTree {
     }
 }
 
-function Get-StaleClientSmokeProcesses {
-    param(
-        [string]$RepoRoot,
-        [int]$CurrentPid
-    )
-
-    $repoPattern = [regex]::Escape($RepoRoot)
-    $targetNames = @("powershell.exe", "cmd.exe", "java.exe")
-
-    $processes = Get-CimInstance Win32_Process -ErrorAction SilentlyContinue | Where-Object {
-        $_.ProcessId -ne $CurrentPid -and
-        $targetNames -contains $_.Name -and
-        $_.CommandLine -and
-        $_.CommandLine -match $repoPattern -and
-        $_.CommandLine -match "runClient|run-client.ps1|gradlew|gradle-wrapper"
-    }
-
-    return @($processes | Select-Object -ExpandProperty ProcessId -Unique)
-}
-
 function Read-FileIfExists {
     param([string]$Path)
 
@@ -138,7 +65,7 @@ $target = $matrix[$Version]
 $effectiveModVersion = if ($ModVersion) { $ModVersion } else { $target.mod_version }
 $resolvedJavaHome = Resolve-JavaHome -PreferredJavaHome $JavaHome
 $runClientScript = Join-Path $PSScriptRoot "run-client.ps1"
-$runLatestLog = Join-Path $repoRoot "run\$Version\logs\latest.log"
+$runLatestLog = Join-Path $repoRoot "run\$Version\smoke\logs\latest.log"
 $logRoot = Join-Path $repoRoot "build\tmp\smoke-client\$Version"
 $stdoutLog = Join-Path $logRoot "stdout.log"
 $stderrLog = Join-Path $logRoot "stderr.log"
@@ -150,22 +77,16 @@ Remove-Item -LiteralPath $stdoutLog, $stderrLog, $runnerScript -Force -ErrorActi
 $env:JAVA_HOME = $resolvedJavaHome
 $env:Path = "$resolvedJavaHome\bin;$env:Path"
 
-$staleIds = Get-StaleClientSmokeProcesses -RepoRoot $repoRoot -CurrentPid $PID
-if ($staleIds.Count -gt 0) {
-    Write-Host ("Cleaning stale runClient smoke processes: " + ($staleIds -join ", "))
-    Stop-ProcessTree -RootIds $staleIds
-}
-
 $scriptLines = @(
     '$ErrorActionPreference = ''Stop'''
-    ('& ''{0}'' -Version ''{1}'' -ModVersion ''{2}'' -Username ''{3}'' {4}' -f $runClientScript, $Version, $effectiveModVersion, $Username, $(if ($NoDaemon) { "-NoDaemon" } else { "" }))
+    ('& ''{0}'' -Version ''{1}'' -ModVersion ''{2}'' -Username ''{3}'' -RunName ''smoke'' {4}' -f $runClientScript.Replace("'", "''"), $Version, $effectiveModVersion.Replace("'", "''"), $Username.Replace("'", "''"), $(if ($NoDaemon) { "-NoDaemon" } else { "" }))
     'exit $LASTEXITCODE'
 )
 [System.IO.File]::WriteAllLines($runnerScript, $scriptLines)
 
 $startedAt = Get-Date
 $process = Start-Process -FilePath "powershell.exe" `
-    -ArgumentList @("-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", $runnerScript) `
+    -ArgumentList @("-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", ('"' + $runnerScript + '"')) `
     -WorkingDirectory $repoRoot `
     -RedirectStandardOutput $stdoutLog `
     -RedirectStandardError $stderrLog `
@@ -174,7 +95,6 @@ $process = Start-Process -FilePath "powershell.exe" `
 
 $successPatterns = @(
     "NoLostPets initialized",
-    "Backend library: LWJGL",
     "minecraft:textures/atlas/blocks.png-atlas"
 )
 $failurePatterns = @(

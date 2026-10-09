@@ -1,65 +1,12 @@
 param(
-    [string[]]$Versions = @("1.21.8", "1.21.9", "1.21.10", "1.21.11"),
+    [ValidateNotNullOrEmpty()][string[]]$Versions = @("26.1", "26.1.1", "26.1.2", "26.2", "26.3"),
     [string]$JavaHome,
     [int]$TimeoutSeconds = 900
 )
 
 $ErrorActionPreference = "Stop"
 
-$matrix = @{
-    "1.21.8" = @{
-        yarn = "1.21.8+build.1"
-        loader = "0.18.2"
-        fabric_api = "0.136.1+1.21.8"
-        mod_version = "1.1.1"
-    }
-    "1.21.9" = @{
-        yarn = "1.21.9+build.1"
-        loader = "0.18.2"
-        fabric_api = "0.134.1+1.21.9"
-        mod_version = "1.1.1"
-    }
-    "1.21.10" = @{
-        yarn = "1.21.10+build.3"
-        loader = "0.18.2"
-        fabric_api = "0.138.4+1.21.10"
-        mod_version = "1.1.1"
-    }
-    "1.21.11" = @{
-        yarn = "1.21.11+build.4"
-        loader = "0.18.2"
-        fabric_api = "0.141.3+1.21.11"
-        mod_version = "1.1.1"
-    }
-}
-
-function Resolve-JavaHome {
-    param([string]$PreferredJavaHome)
-
-    $candidates = @()
-    if ($PreferredJavaHome) {
-        $candidates += $PreferredJavaHome
-    }
-    $candidates += Get-ChildItem "C:\Program Files\Eclipse Adoptium" -Directory -ErrorAction SilentlyContinue |
-        Where-Object { $_.Name -like "jdk-21*" } |
-        Sort-Object Name -Descending |
-        Select-Object -ExpandProperty FullName
-    $candidates += Get-ChildItem "C:\Program Files\Java" -Directory -ErrorAction SilentlyContinue |
-        Where-Object { $_.Name -like "jdk-21*" } |
-        Sort-Object Name -Descending |
-        Select-Object -ExpandProperty FullName
-    if ($env:JAVA_HOME) {
-        $candidates += $env:JAVA_HOME
-    }
-
-    foreach ($candidate in $candidates | Select-Object -Unique) {
-        if ($candidate -and (Test-Path (Join-Path $candidate "bin\java.exe"))) {
-            return $candidate
-        }
-    }
-
-    throw "JDK 21 was not found. Pass -JavaHome or install JDK 21."
-}
+. (Join-Path $PSScriptRoot "versions.ps1")
 
 function Get-ProcessTreeIds {
     param([int[]]$RootIds)
@@ -96,33 +43,15 @@ function Stop-ProcessTree {
     }
 }
 
-function Get-StaleRunGameTestProcesses {
-    param(
-        [string]$RepoRoot,
-        [int]$CurrentPid
-    )
-
-    $repoPattern = [regex]::Escape($RepoRoot)
-    $targetNames = @("cmd.exe", "java.exe")
-
-    $processes = Get-CimInstance Win32_Process -ErrorAction SilentlyContinue | Where-Object {
-        $_.ProcessId -ne $CurrentPid -and
-        $targetNames -contains $_.Name -and
-        $_.CommandLine -and
-        $_.CommandLine -match $repoPattern -and
-        $_.CommandLine -match "runGameTest|gradlew|gradle-wrapper"
-    }
-
-    return @($processes | Select-Object -ExpandProperty ProcessId -Unique)
-}
-
 function Invoke-VersionVerify {
     param(
         [hashtable]$Target,
         [string]$GradlePath,
         [string]$RepoRoot,
         [string]$LogRoot,
-        [int]$TimeoutSeconds
+        [int]$TimeoutSeconds,
+        [int]$ExpectedGameTests,
+        [int]$ExpectedUnitTests
     )
 
     $version = $Target.version
@@ -140,24 +69,24 @@ function Invoke-VersionVerify {
     }
 
     $scriptLines = @(
-        '$ErrorActionPreference = ''Stop'''
-        ('& ''{0}'' ''test'' ''runGameTest'' ''--no-daemon'' ''-Pminecraft_version={1}'' ''-Pyarn_mappings={2}'' ''-Ploader_version={3}'' ''-Pfabric_version={4}'' ''-Pmod_version={5}''' -f $GradlePath, $Target.version, $Target.yarn, $Target.loader, $Target.fabric_api, $Target.mod_version)
+        '$ErrorActionPreference = ''Continue'''
+        ('& ''{0}'' ''test'' ''runGameTest'' ''--rerun-tasks'' ''--no-daemon'' ''--console=plain'' ''-Pminecraft_version={1}'' ''-Ploader_version={2}'' ''-Pfabric_version={3}'' ''-Pmod_version={4}'' ''-Ploom_run_dir=run/{1}/gametest'' ''-g'' ''{5}''' -f $GradlePath.Replace("'", "''"), $Target.version, $Target.loader, $Target.fabric_api, $Target.mod_version, (Join-Path $RepoRoot '.gradle-user-home').Replace("'", "''"))
         'exit $LASTEXITCODE'
     )
     [System.IO.File]::WriteAllLines($runnerScript, $scriptLines)
 
-    $args = @(
+    $processArguments = @(
         "-NoProfile"
         "-NonInteractive"
         "-ExecutionPolicy"
         "Bypass"
         "-File"
-        $runnerScript
+        ('"' + $runnerScript + '"')
     )
 
     $startedAt = Get-Date
     $process = Start-Process -FilePath "powershell.exe" `
-        -ArgumentList $args `
+        -ArgumentList $processArguments `
         -WorkingDirectory $RepoRoot `
         -RedirectStandardOutput $stdoutLog `
         -RedirectStandardError $stderrLog `
@@ -194,7 +123,16 @@ function Invoke-VersionVerify {
                 $exitCode = $process.ExitCode
                 $finalStdout = Get-Content -LiteralPath $stdoutLog -Raw -Encoding UTF8
                 $finalStderr = if (Test-Path -LiteralPath $stderrLog) { Get-Content -LiteralPath $stderrLog -Raw -Encoding UTF8 } else { "" }
-                $testsRan = $finalStdout -match "All [1-9][0-9]* required tests passed"
+                $testsRan = $finalStdout -match "All ([1-9][0-9]*) required tests passed" -and [int]$Matches[1] -eq $ExpectedGameTests
+                $unitRan = 0
+                $unitFailed = 0
+                foreach ($report in Get-ChildItem -LiteralPath (Join-Path $RepoRoot 'build/test-results/test') -Filter 'TEST-*.xml' -ErrorAction SilentlyContinue) {
+                    if ($report.LastWriteTime -lt $startedAt.AddSeconds(-2)) { continue }
+                    [xml]$xml = Get-Content -LiteralPath $report.FullName -Raw
+                    $unitRan += [int]$xml.testsuite.tests
+                    $unitFailed += [int]$xml.testsuite.failures + [int]$xml.testsuite.errors + [int]$xml.testsuite.skipped
+                }
+                $testsRan = $testsRan -and $unitRan -eq $ExpectedUnitTests -and $unitFailed -eq 0
                 $buildPassed = $finalStdout -match "BUILD SUCCESSFUL"
                 $testsFailed = $finalStdout -match "[1-9][0-9]* required tests failed"
                 $buildFailed = $finalStdout -match "BUILD FAILED" -or $finalStderr -match "BUILD FAILED"
@@ -236,11 +174,15 @@ New-Item -ItemType Directory -Force -Path $logRoot | Out-Null
 $env:JAVA_HOME = $resolvedJavaHome
 $env:Path = "$resolvedJavaHome\bin;$env:Path"
 
-$staleIds = Get-StaleRunGameTestProcesses -RepoRoot $repoRoot -CurrentPid $PID
-if ($staleIds.Count -gt 0) {
-    Write-Host ("Cleaning stale runGameTest processes: " + ($staleIds -join ", "))
-    Stop-ProcessTree -RootIds $staleIds
+$expectedGameTests = 0
+$expectedUnitTests = 0
+foreach ($file in Get-ChildItem (Join-Path $repoRoot 'src/gametest/java') -Recurse -Filter '*.java') {
+    $expectedGameTests += [regex]::Matches((Get-Content $file.FullName -Raw), '@GameTest\b').Count
 }
+foreach ($file in Get-ChildItem (Join-Path $repoRoot 'src/test/java') -Recurse -Filter '*.java') {
+    $expectedUnitTests += [regex]::Matches((Get-Content $file.FullName -Raw), '@Test\b').Count
+}
+if ($expectedGameTests -eq 0 -or $expectedUnitTests -eq 0) { throw 'No tests discovered in source sets' }
 
 $results = @()
 $targets = @()
@@ -248,20 +190,20 @@ foreach ($version in $Versions) {
     if (-not $matrix.ContainsKey($version)) {
         throw "Unsupported target '$version'. Supported targets: $($matrix.Keys -join ', ')"
     }
-    $target = $matrix[$version]
-    $target["version"] = $version
+    $target = Get-MinecraftTarget $version
     $targets += $target
 }
 
-try {
-    foreach ($target in $targets) {
+foreach ($target in $targets) {
         Write-Host ("Running verify suites on " + $target.version + "...")
         $result = Invoke-VersionVerify `
             -Target $target `
             -GradlePath $gradle `
             -RepoRoot $repoRoot `
             -LogRoot $logRoot `
-            -TimeoutSeconds $TimeoutSeconds
+            -TimeoutSeconds $TimeoutSeconds `
+            -ExpectedGameTests $expectedGameTests `
+            -ExpectedUnitTests $expectedUnitTests
         $results += $result
 
         switch ($result.Status) {
@@ -281,12 +223,6 @@ try {
         if ($result.Status -ne "passed") {
             break
         }
-    }
-} finally {
-    $leftovers = Get-StaleRunGameTestProcesses -RepoRoot $repoRoot -CurrentPid $PID
-    if ($leftovers.Count -gt 0) {
-        Stop-ProcessTree -RootIds $leftovers
-    }
 }
 
 Write-Host ""

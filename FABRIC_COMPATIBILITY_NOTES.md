@@ -1,45 +1,21 @@
-# Fabric Compatibility Notes
+# Minecraft 26 compatibility
 
-These notes are based on official Fabric documentation and official Fabric metadata endpoints.
+This branch builds exact-version candidate jars. Compilation is checked; behavioral verification is pending.
 
-## Official sources
+| Minecraft | Fabric API | Loader | Java |
+| --- | --- | --- | --- |
+| 26.1 | 0.145.1+26.1 | 0.19.5 | 25 |
+| 26.1.1 | 0.145.4+26.1.1 | 0.19.5 | 25 |
+| 26.1.2 | 0.155.3+26.1.2 | 0.19.5 | 25 |
+| 26.2 | 0.161.0+26.2 | 0.19.5 | 25 |
+| 26.3 | 0.162.0+26.3 | 0.19.5 | 25 |
 
-- https://docs.fabricmc.net/1.21.8/develop/getting-started/creating-a-project
-- https://docs.fabricmc.net/1.21.11/develop/getting-started/creating-a-project
-- https://docs.fabricmc.net/1.21.11/develop/porting/
-- https://docs.fabricmc.net/develop/getting-started/creating-a-project
-- https://docs.fabricmc.net/develop/porting/mappings/loom
-- https://docs.fabricmc.net/develop/porting/next
-- https://fabricmc.net/blog/
-- https://meta.fabricmc.net/v2/versions/game
-- https://meta.fabricmc.net/v2/versions/loader
-- https://meta.fabricmc.net/v2/versions/yarn
-- https://maven.fabricmc.net/net/fabricmc/fabric-api/fabric-api/maven-metadata.xml
+Build: Gradle wrapper 9.6.0, `net.fabricmc.fabric-loom` 1.17.21. Minecraft is unobfuscated; Yarn and remapping are not used.
 
-## What the docs say
+The core uses public chunk readiness and ticket APIs, UUID ownership, and strict saved-index loading. Compile-time adapters cover entity constants moved in 26.2 and the LAN publishing signatures changed in 26.2 and 26.3. They do not broaden any jar's supported Minecraft version.
 
-- The Fabric docs page for `1.21.8` is written for that version and uses the current project-generation flow.
-- The Fabric docs page for `1.21.11` is written for that version and points modders to the Fabric Develop site for the exact Minecraft, mappings, Loader, Loom, and Fabric API versions.
-- The `1.21.11` porting docs say `1.21.11` is the final release where Yarn mappings will be available for porting to newer versions.
-- The current Fabric docs page is written for `26.1.1`.
-- The current `26.1` snapshot porting docs say mods still on Yarn must first migrate to Mojang mappings before porting to `26.1`.
-- The same `26.1` docs also say to switch the Loom plugin id from `fabric-loom` to `net.fabricmc.fabric-loom`, remove the `mappings` dependency line, and replace `modImplementation` or `modCompileOnly` with `implementation` and `compileOnly`.
+`scripts/build-26x.ps1` compiles main, unit-test, and GameTest sources, packages candidates, checks artifact metadata and Java class versions, and writes SHA-256 files. It does not run tests or publish a release. `scripts/verify-all.ps1` is the explicit behavioral verification entry point.
 
-## Official version matrix
+Before release, execute the prepared unit/GameTest suites and verify upgrade/restart of a copied 1.21.11 world, singleplayer, dedicated server, and LAN. Compilation alone does not establish runtime compatibility.
 
-| Minecraft | Yarn | Loader | Fabric API | Status in this repo |
-| --- | --- | --- | --- | --- |
-| `1.21.8` | `1.21.8+build.1` | `0.18.2` | `0.136.1+1.21.8` | `compileJava` passes, `remapJar` passes |
-| `1.21.9` | `1.21.9+build.1` | `0.18.2` | `0.134.1+1.21.9` | `compileJava` passes, `remapJar` passes |
-| `1.21.10` | `1.21.10+build.3` | `0.18.2` | `0.138.4+1.21.10` | `compileJava` passes, `remapJar` passes |
-| `1.21.11` | `1.21.11+build.4` | `0.18.2` | `0.141.3+1.21.11` | `compileJava` passes, `remapJar` passes |
-| `26.1` | none | `0.18.2` | `0.145.1+26.1` | blocked on Yarn -> Mojang migration |
-| `26.1.1` | none | `0.18.2` | `0.145.4+26.1.1` | blocked on Yarn -> Mojang migration |
-| `26.1.2` | none | `0.18.2` | `0.145.4+26.1.2` | blocked on Yarn -> Mojang migration |
-
-## Current conclusion
-
-- The current source tree can be built for the full `1.21.8` through `1.21.11` line after the added compatibility bridge for world access, command permissions, and chunk NBT writes.
-- `26.1.x` is not a simple dependency bump. It requires a dedicated port to Mojang mappings or unobfuscated names, plus build script changes described in the official Fabric porting docs.
-- Treat `1.21.8-1.21.11` and `26.1.x` as separate release lines.
-- Loom still prints a remap warning about the `storage` accessor during `remapJar`. The jars are produced successfully, but that accessor should be verified in a real game runtime before publishing broadly.
+Sources: [Fabric 26.1 porting guide](https://docs.fabricmc.net/26.1.2/develop/porting/), [Fabric 26.2 changes](https://www.fabricmc.net/2026/06/15/262.html), [Fabric 26.3 changes](https://www.fabricmc.net/2026/09/15/263.html), and the official Minecraft server/client jars for the respective versions.

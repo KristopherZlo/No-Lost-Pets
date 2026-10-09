@@ -12,33 +12,7 @@ param(
 
 $ErrorActionPreference = "Stop"
 
-function Resolve-JavaHome {
-    param([string]$PreferredJavaHome)
-
-    $candidates = @()
-    if ($PreferredJavaHome) {
-        $candidates += $PreferredJavaHome
-    }
-    $candidates += Get-ChildItem "C:\Program Files\Eclipse Adoptium" -Directory -ErrorAction SilentlyContinue |
-        Where-Object { $_.Name -like "jdk-21*" } |
-        Sort-Object Name -Descending |
-        Select-Object -ExpandProperty FullName
-    $candidates += Get-ChildItem "C:\Program Files\Java" -Directory -ErrorAction SilentlyContinue |
-        Where-Object { $_.Name -like "jdk-21*" } |
-        Sort-Object Name -Descending |
-        Select-Object -ExpandProperty FullName
-    if ($env:JAVA_HOME) {
-        $candidates += $env:JAVA_HOME
-    }
-
-    foreach ($candidate in $candidates | Select-Object -Unique) {
-        if ($candidate -and (Test-Path (Join-Path $candidate "bin\java.exe"))) {
-            return $candidate
-        }
-    }
-
-    throw "JDK 21 was not found. Pass -JavaHome or install JDK 21."
-}
+. (Join-Path $PSScriptRoot "versions.ps1")
 
 function Get-FreeTcpPort {
     $listener = [System.Net.Sockets.TcpListener]::new([System.Net.IPAddress]::Loopback, 0)
@@ -139,7 +113,7 @@ function Start-LanClientProcess {
     [System.IO.File]::WriteAllLines($processScript, $scriptLines)
 
     return Start-Process -FilePath "powershell.exe" `
-        -ArgumentList @("-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", $processScript) `
+        -ArgumentList @("-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", ('"' + $processScript + '"')) `
         -WorkingDirectory $RepoRoot `
         -RedirectStandardOutput $StdoutLog `
         -RedirectStandardError $StderrLog `
@@ -153,12 +127,14 @@ function Quote-PowerShellString {
 }
 
 $repoRoot = Split-Path -Parent $PSScriptRoot
+if ([System.IO.Path]::GetFileName($WorldName) -ne $WorldName -or $WorldName -in @(".", "..")) { throw "Invalid world name" }
 $runClient = Join-Path $PSScriptRoot "run-client.ps1"
 $resolvedJavaHome = Resolve-JavaHome -PreferredJavaHome $JavaHome
-$effectiveModVersion = if ($ModVersion) { $ModVersion } else { "1.1.1" }
+$effectiveModVersion = if ($ModVersion) { $ModVersion } else { (Get-MinecraftTarget $Version).mod_version }
 $port = Get-FreeTcpPort
 $smokeDir = Join-Path $repoRoot "build\tmp\smoke-lan\$Version"
-$worldPath = Join-Path $repoRoot ("run\shared\saves\" + $WorldName)
+$null = Get-MinecraftTarget $Version
+$worldPath = Join-Path $repoRoot ("run\$Version\$Version-lan-host\saves\" + $WorldName)
 
 if (-not (Test-Path -LiteralPath (Join-Path $worldPath "level.dat"))) {
     throw "LAN smoke needs an existing local world at '$worldPath'. Create it once or pass -WorldName."

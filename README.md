@@ -2,7 +2,7 @@
 
 ![NoLostPets banner](banner.png)
 
-![Minecraft](https://img.shields.io/badge/Minecraft-1.21.8--1.21.11-5E7C16?style=for-the-badge)
+![Minecraft](https://img.shields.io/badge/Minecraft-26.1--26.3-5E7C16?style=for-the-badge)
 ![Loader](https://img.shields.io/badge/Loader-Fabric-DBD0B4?style=for-the-badge)
 ![Environment](https://img.shields.io/badge/Environment-Server%20%26%20Singleplayer-1F6FEB?style=for-the-badge)
 ![License](https://img.shields.io/badge/License-GPL--3.0-2EA043?style=for-the-badge)
@@ -11,9 +11,9 @@
 >
 > Safe. Automatic. Server-side. Built for real lost pets.
 
-NoLostPets is a Fabric mod for Minecraft `1.21.8` through `1.21.11` that brings companion pets back to their owner, including pets stored in unloaded chunks. Recovery temporarily loads the source chunk through Minecraft, then teleports the existing entity. It is built as one universal jar for the full `1.21.8-1.21.11` line.
+NoLostPets is a Fabric mod that recalls companion pets from loaded and unloaded chunks. Minecraft loads the source chunk, and the mod moves the existing entity to its owner.
 
-For a shorter storefront-style description, see [MODRINTH_DESCRIPTION.md](MODRINTH_DESCRIPTION.md).
+The `mc-26x` branch prepares a separate candidate jar for each Minecraft target from `26.1` through `26.3`. Code and test sources compile for these targets. Behavioral tests and in-game verification have not been run for this port. The `main` branch retains the `1.21.x` implementation.
 
 ## What Is This?
 
@@ -58,7 +58,7 @@ If the real problem is "my pet is lost somewhere outside simulation distance", t
 - Cleans up stale records after repeated misses.
 - Supports vanilla tameables and many modded pets with standard owner/sit NBT.
 - Includes built-in admin stats and verify/self-test commands.
-- Ships as one universal jar for Minecraft `1.21.8` through `1.21.11`.
+- Builds a separate jar with an exact Minecraft version dependency for each target.
 
 ## Commands
 
@@ -102,9 +102,9 @@ All commands require admin/operator permission.
 
 ### Pet Detection
 
-- Vanilla `TameableEntity` mobs are supported directly.
+- Vanilla `TamableAnimal` mobs are supported directly.
 - Many modded pets are supported if they expose normal owner UUID and sitting/follow signals in NBT.
-- Tamed mounts such as horses, donkeys, mules, llamas, camels, and similar `AbstractHorseEntity` mobs are intentionally excluded.
+- Tamed mounts such as horses, donkeys, mules, llamas, camels, and similar `AbstractHorse` mobs are intentionally excluded.
 
 ### Stale Record Handling
 
@@ -120,12 +120,15 @@ All commands require admin/operator permission.
 
 ## Compatibility
 
-| Minecraft | Status | Jar | Notes |
-| --- | --- | --- | --- |
-| `1.21.8` | Supported | Universal | Baseline build target |
-| `1.21.9` | Supported | Universal | Same jar |
-| `1.21.10` | Supported | Universal | Same jar |
-| `1.21.11` | Supported | Universal | Same jar |
+| Minecraft | Fabric API | Status |
+| --- | --- | --- |
+| `26.1` | `0.145.1+26.1` | Candidate; gameplay verification pending |
+| `26.1.1` | `0.145.4+26.1.1` | Candidate; gameplay verification pending |
+| `26.1.2` | `0.155.3+26.1.2` | Candidate; gameplay verification pending |
+| `26.2` | `0.161.0+26.2` | Candidate; gameplay verification pending |
+| `26.3` | `0.162.0+26.3` | Candidate; gameplay verification pending |
+
+These targets require Java `25`, Fabric Loader `0.19.5` or later, and the matching Fabric API. Each jar declares one exact Minecraft version.
 
 ## Installation
 
@@ -133,7 +136,7 @@ All commands require admin/operator permission.
 
 1. Install Fabric Loader for your Minecraft version.
 2. Install the matching Fabric API version.
-3. Put the universal `NoLostPets` jar into the server `mods` folder.
+3. Put the matching `NoLostPets` jar into the server `mods` folder.
 4. Start the server.
 
 Clients do not need the mod on a dedicated server.
@@ -182,58 +185,49 @@ In the world save as server persistent state under the mod's saved data.
 
 ## Build From Source
 
-Java `21` is required.
+Use JDK `25`. The Gradle wrapper selects Gradle `9.6.0`; Loom `1.17.21` uses Minecraft's official, unobfuscated names.
 
-```bash
-./gradlew build
-```
-
-On Windows:
+On Windows, compile the mod and both test source sets, then package all five targets:
 
 ```powershell
-.\gradlew.bat build
+.\scripts\build-26x.ps1
 ```
 
-To build the universal artifact with the helper script:
+For one target:
 
 ```powershell
-.\build-universal.ps1
+.\scripts\build-26x.ps1 -Versions 26.3 -JavaHome 'C:\Program Files\Eclipse Adoptium\jdk-25.0.2.10-hotspot'
 ```
 
-Artifacts are written to `dist/universal/`.
+Candidates, source jars, and SHA-256 files are written to `build/candidates/<version>/`. For example: `NoLostPets-1.2.0+mc26.3.jar`. This script compiles tests but does not execute them, launch Minecraft, or publish artifacts.
 
 ## Local Test Clients
 
-Windows helper scripts are included for all supported versions:
+Run a client explicitly:
 
 ```powershell
-.\run-1.21.8.ps1
-.\run-1.21.9.ps1
-.\run-1.21.10.ps1
-.\run-1.21.11.ps1
-.\verify-all.ps1
+.\scripts\run-client.ps1 -Version 26.3
 ```
 
-All test clients share the same runtime data in `run/shared`, including worlds, config, and `options.txt`, while still launching different Minecraft versions.
+Runtime files are isolated under `run/<version>/<run-name>/`; the default client directory is `run/26.3/client/`. Worlds are never linked between versions. Use copies of worlds for upgrade verification.
 
-`verify-all.ps1` runs unit tests and GameTests, including the built-in `verify singleplayer` and `verify multiplayer` command suites, across `1.21.8` through `1.21.11`, sequentially. It requires a nonzero count of passed required GameTests, a successful Gradle build, and exit code zero. Logs are written to `build/tmp/verify-all/`.
-
-Release builds use `scripts/build-1.21x.ps1`. Each Minecraft target has its own `mod_version` in the script matrix, so hotfix versions can differ between game versions. By default the build is gated by two smoke checks per target before a jar is produced:
+The following commands execute tests when verification is authorized:
 
 ```powershell
-.\scripts\smoke-client.ps1 -Version 1.21.11
-.\scripts\verify-all.ps1 -Versions 1.21.11
+.\scripts\verify-all.ps1
+.\scripts\smoke-client.ps1 -Version 26.3
+.\scripts\smoke-lan.ps1 -Version 26.3 -WorldName Testing
 ```
 
-The client smoke starts `runClient` and waits for Minecraft, LWJGL, and NoLostPets to initialize. The GameTest smoke starts the Minecraft GameTest runtime and runs the command-path self-test suite.
+`verify-all.ps1` requires exit code zero, a successful Gradle build, the complete discovered GameTest count, and JUnit reports with all discovered tests executed and no failures, errors, or skips. A timeout or missing result fails verification. Logs are stored under `build/tmp/verify-all/`.
 
-Two-client LAN smoke is also available:
+LAN verification starts two isolated clients. Its host world must already exist at `run/26.3/26.3-lan-host/saves/Testing/`. Create a disposable test world there with `run-client.ps1 -Version 26.3 -RunName 26.3-lan-host` before running LAN verification.
 
-```powershell
-.\scripts\smoke-lan.ps1 -Version 1.21.11 -WorldName Testing
-```
+## Index Migration
 
-It launches two Minecraft clients with different usernames, loads the named local world on the host, opens it to LAN, connects the second client to `127.0.0.1`, and runs the multiplayer verify suite. Release builds can opt into this heavier check with `.\scripts\build-1.21x.ps1 -RunLanSmoke`; it requires the named world to exist under `run/shared/saves/`.
+When the new index is absent, the mod reads legacy `pet_recall_index.dat` files, validates every record, saves through Minecraft, and reads the result back before enabling recall. The legacy file is retained. An existing new index always takes precedence, so a restart cannot restore a removed pet or undo an ownership change by importing the old file again.
+
+Unreadable files, invalid records, conflicting legacy indexes, and failed writes disable index operations for that server session. The server log explains the failure; commands report that the index is unavailable. Repair the data and restart before trying again.
 
 ## Debug Logging
 
@@ -245,19 +239,16 @@ By default this trace is enabled in development environments. For normal server 
 -Dnolostpets.debug=true
 ```
 
-For local multi-version runs in this repo, the file is version-specific:
-
-- `run/1.21.8/logs/NoLostPets-debug.log`
-- `run/1.21.9/logs/NoLostPets-debug.log`
-- `run/1.21.10/logs/NoLostPets-debug.log`
-- `run/1.21.11/logs/NoLostPets-debug.log`
+For a default local client run, the trace is stored at `run/26.3/client/logs/NoLostPets-debug.log`.
 
 ## Project Layout
 
 - `src/main/` contains the mod logic, commands, tracking, recall service, and mixins.
 - `src/gametest/` contains Fabric game tests.
-- `scripts/` contains helper scripts for universal builds and per-version client runs.
-- `FABRIC_COMPATIBILITY_NOTES.md` documents the verified Fabric version matrix for the `1.21.x` line.
+- `src/compat/` contains the version-specific entity constants and LAN publishing calls used by verification tools.
+- `src/test/` contains unit tests, including migration failure and restart scenarios.
+- `scripts/versions.ps1` defines the five dependency combinations used by build and verification scripts.
+- `FABRIC_COMPATIBILITY_NOTES.md` lists this branch's dependency matrix and verification status.
 
 ## License
 
