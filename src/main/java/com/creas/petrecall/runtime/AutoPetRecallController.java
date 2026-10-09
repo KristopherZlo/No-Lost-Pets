@@ -1,15 +1,18 @@
 package com.creas.petrecall.runtime;
 
-import com.creas.petrecall.index.PetRecord;
 import com.creas.petrecall.index.PetIndexState;
+import com.creas.petrecall.index.PetRecord;
 import com.creas.petrecall.recall.PetRecallService.RecallSummary;
 import com.creas.petrecall.recall.PetRecallService;
 import com.creas.petrecall.util.DebugTrace;
 import com.creas.petrecall.util.VersionCompat;
+import java.util.ArrayDeque;
+import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Comparator;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
@@ -108,46 +111,19 @@ public final class AutoPetRecallController {
         this.playerStates.remove(playerUuid);
     }
 
-    public boolean debugRunImmediateCheck(ServerPlayer player, java.util.List<PetRecord> records, Consumer<RecallSummary> onComplete) {
-        if (records.isEmpty()) {
-            return false;
-        }
-
+    public boolean debugRunImmediateCheck(ServerPlayer player, List<PetRecord> records, Consumer<RecallSummary> onComplete) {
         MinecraftServer server = VersionCompat.getServer(player);
-        if (server == null || server.overworld() == null || player.isRemoved() || player.isSpectator()
-                || !PetRecallService.isPlayerGroundedForRecall(player)) {
+        if (records.isEmpty() || server == null || server.overworld() == null || !PetIndexState.isAvailable(server) || player.isRemoved()
+                || player.isSpectator() || !PetRecallService.isPlayerGroundedForRecall(player)
+                || this.recallService.isRecallActive(player.getUUID())) {
             return false;
         }
-
-        long now = server.overworld().getGameTime();
-        UUID playerUuid = player.getUUID();
-        PlayerAutoState state = this.playerStates.computeIfAbsent(playerUuid, ignored -> new PlayerAutoState());
-        java.util.ArrayList<PetRecord> batchRecords = new java.util.ArrayList<>(records);
-        boolean hasMoreCandidates = batchRecords.size() > MAX_UNLOADED_PETS_PER_AUTO_RUN;
-        if (hasMoreCandidates) {
-            batchRecords.subList(MAX_UNLOADED_PETS_PER_AUTO_RUN, batchRecords.size()).clear();
-        }
-
-        if (this.recallService.isRecallActive(playerUuid)) {
-            return false;
-        }
-
-        AutoRecallBatch batch = new AutoRecallBatch(batchRecords, hasMoreCandidates);
-        DebugTrace.log("auto-recall", "Starting debug auto recall batch for %s candidates=%d hasMore=%s",
-                DebugTrace.describePlayer(player), batch.records().size(), batch.hasMoreCandidates());
-        boolean started = this.recallService.recallUnloadedForPlayerAsyncSilent(player, batch.records(), summary -> {
-            this.handleBatchCompleted(server, player, playerUuid, batch, summary);
-            onComplete.accept(summary);
-        });
-        if (started) {
-            this.applyBackoff(batch.records(), now + AUTO_PET_BACKOFF_TICKS);
-            if (!batch.hasMoreCandidates()) {
-                state.nextRecallTick = now + AUTO_RECALL_COOLDOWN_TICKS;
-            }
-            DebugTrace.log("auto-recall", "Debug auto recall accepted for %s backoffUntil=%d nextRecallTick=%d",
-                    DebugTrace.describePlayer(player), now + AUTO_PET_BACKOFF_TICKS, state.nextRecallTick);
-        }
-        return started;
+        PlayerAutoState state = this.playerStates.computeIfAbsent(player.getUUID(), ignored -> new PlayerAutoState());
+        state.pendingPets.clear();
+        records.stream().filter(record -> this.tracker.getLoadedPet(record.petUuid()) == null)
+                .forEach(state.pendingPets::addLast);
+        List<PetRecord> batch = this.takeNextBatch(server, player, state);
+        return !batch.isEmpty() && this.startBatch(server, player, state, batch, onComplete);
     }
 
     private void tickPlayer(MinecraftServer server, ServerPlayer player, long now) {
@@ -174,6 +150,7 @@ public final class AutoPetRecallController {
                 this.scheduleCheck(state, now, "chunk changed from " + state.lastChunkPosLong + " to " + currentChunk);
             }
             if (!state.lastDimensionId.equals(currentDimension)) {
+                state.pendingPets.clear();
                 this.scheduleCheck(state, now, "dimension changed from " + state.lastDimensionId + " to " + currentDimension);
             }
             if (!state.lastOnGround && onGround) {
@@ -198,65 +175,72 @@ public final class AutoPetRecallController {
 
         boolean continueBatch = state.continueNextBatchTick >= 0L && now >= state.continueNextBatchTick;
         boolean pendingCheck = state.pendingCheck && now >= state.pendingCheckTick;
-        if (!continueBatch && !pendingCheck) {
+        if ((!continueBatch && !pendingCheck) || !onGround || now < state.nextRecallTick
+                || this.recallService.isRecallActive(playerUuid)) {
             return;
         }
 
-        if (!onGround) {
-            if (continueBatch) {
-                state.continueNextBatchTick = -1L;
-            }
-            return;
+        if (state.pendingPets.isEmpty()) {
+            // Select the whole unloaded group before our chunk tickets load its neighbours.
+            state.pendingPets.addAll(this.collectAutoRecallCandidates(server, player, now));
         }
-
-        if (now < state.nextRecallTick) {
-            return;
-        }
-
-        if (this.recallService.isRecallActive(playerUuid)) {
-            return;
-        }
-
-        AutoRecallBatch batch = this.collectAutoRecallCandidates(server, player, now);
-        if (batch.records().isEmpty()) {
-            DebugTrace.log("auto-recall", "No auto-recall candidates for %s", DebugTrace.describePlayer(player));
-            state.pendingCheck = false;
-            state.continueNextBatchTick = -1L;
-            return;
-        }
-
         state.pendingCheck = false;
-        UUID playerUuidFinal = playerUuid;
-        DebugTrace.log("auto-recall", "Starting auto recall batch for %s candidates=%d hasMore=%s", DebugTrace.describePlayer(player), batch.records().size(), batch.hasMoreCandidates());
-        boolean started = this.recallService.recallUnloadedForPlayerAsyncSilent(player, batch.records(), summary ->
-                this.handleBatchCompleted(server, player, playerUuidFinal, batch, summary)
-        );
-        if (started) {
-            this.applyBackoff(batch.records(), now + AUTO_PET_BACKOFF_TICKS);
-            if (!batch.hasMoreCandidates()) {
-                state.nextRecallTick = now + AUTO_RECALL_COOLDOWN_TICKS;
-            }
-            DebugTrace.log("auto-recall", "Auto recall accepted for %s backoffUntil=%d nextRecallTick=%d",
-                    DebugTrace.describePlayer(player), now + AUTO_PET_BACKOFF_TICKS, state.nextRecallTick);
-        } else {
+        List<PetRecord> batch = this.takeNextBatch(server, player, state);
+        if (batch.isEmpty()) {
             state.continueNextBatchTick = -1L;
-            state.nextRecallTick = now + AUTO_RETRY_THROTTLE_TICKS;
-            DebugTrace.log("auto-recall", "Auto recall rejected because recall is already active or could not start for %s retryTick=%d",
-                    DebugTrace.describePlayer(player), state.nextRecallTick);
+            return;
         }
+        this.startBatch(server, player, state, batch, summary -> { });
     }
 
-    private AutoRecallBatch collectAutoRecallCandidates(MinecraftServer server, ServerPlayer player, long now) {
+    private List<PetRecord> takeNextBatch(MinecraftServer server, ServerPlayer player, PlayerAutoState state) {
+        List<PetRecord> batch = new ArrayList<>(MAX_UNLOADED_PETS_PER_AUTO_RUN);
+        while (!state.pendingPets.isEmpty() && batch.size() < MAX_UNLOADED_PETS_PER_AUTO_RUN) {
+            PetRecord queued = state.pendingPets.removeFirst();
+            PetRecord current = PetIndexState.get(server).getPet(queued.petUuid());
+            if (current != null && current.ownerUuid().equals(player.getUUID()) && !current.sitting()
+                    && current.dimensionId().equals(VersionCompat.getDimensionId(player))
+                    && distanceSqTo(current, player.getX(), player.getY(), player.getZ()) >= VANILLA_FOLLOW_TELEPORT_DISTANCE_SQ) {
+                batch.add(current);
+            }
+        }
+        return batch;
+    }
+
+    private boolean startBatch(MinecraftServer server, ServerPlayer player, PlayerAutoState state,
+            List<PetRecord> batch, Consumer<RecallSummary> onComplete) {
+        long now = server.overworld().getGameTime();
+        DebugTrace.log("auto-recall", "Starting auto batch for %s selected=%d remaining=%d",
+                DebugTrace.describePlayer(player), batch.size(), state.pendingPets.size());
+        boolean started = this.recallService.recallSelectedPetsForPlayerAsyncSilent(player, batch, summary -> {
+            this.handleBatchCompleted(server, player, state, batch, summary);
+            onComplete.accept(summary);
+        });
+        if (started) {
+            this.applyBackoff(batch, now + AUTO_PET_BACKOFF_TICKS);
+        } else {
+            this.restoreBatch(state, batch);
+            state.continueNextBatchTick = now + AUTO_RETRY_THROTTLE_TICKS;
+            state.nextRecallTick = state.continueNextBatchTick;
+        }
+        return started;
+    }
+
+    private static void restoreBatch(PlayerAutoState state, List<PetRecord> batch) {
+        for (int i = batch.size() - 1; i >= 0; i--) state.pendingPets.addFirst(batch.get(i));
+    }
+
+    private List<PetRecord> collectAutoRecallCandidates(MinecraftServer server, ServerPlayer player, long now) {
         Collection<PetRecord> records = this.tracker.getOwnerRecords(server, player.getUUID());
         if (records.isEmpty()) {
-            return AutoRecallBatch.empty();
+            return List.of();
         }
 
         String playerDimensionId = VersionCompat.getDimensionId(player);
         double playerX = player.getX();
         double playerY = player.getY();
         double playerZ = player.getZ();
-        var candidates = new java.util.ArrayList<PetRecord>(Math.min(records.size(), MAX_UNLOADED_PETS_PER_AUTO_RUN + 4));
+        var candidates = new ArrayList<PetRecord>(records.size());
         int skippedSitting = 0;
         int skippedDimension = 0;
         int skippedLoaded = 0;
@@ -308,7 +292,7 @@ public final class AutoPetRecallController {
         if (candidates.isEmpty()) {
             DebugTrace.log("auto-recall", "Candidate scan empty for %s indexed=%d sitting=%d wrongDim=%d loaded=%d quarantined=%d backoff=%d near=%d",
                     DebugTrace.describePlayer(player), records.size(), skippedSitting, skippedDimension, skippedLoaded, skippedQuarantined, skippedBackoff, skippedNear);
-            return AutoRecallBatch.empty();
+            return List.of();
         }
 
         candidates.sort(Comparator
@@ -317,15 +301,10 @@ public final class AutoPetRecallController {
                 .thenComparingDouble(record -> -distanceSqTo(record, playerX, playerY, playerZ))
                 .thenComparing(PetRecord::petUuid));
 
-        boolean hasMoreCandidates = candidates.size() > MAX_UNLOADED_PETS_PER_AUTO_RUN;
-        if (hasMoreCandidates) {
-            candidates.subList(MAX_UNLOADED_PETS_PER_AUTO_RUN, candidates.size()).clear();
-        }
-
         DebugTrace.log("auto-recall", "Candidate scan for %s indexed=%d selected=%d hasMore=%s sitting=%d wrongDim=%d loaded=%d quarantined=%d backoff=%d near=%d",
-                DebugTrace.describePlayer(player), records.size(), candidates.size(), hasMoreCandidates, skippedSitting, skippedDimension, skippedLoaded, skippedQuarantined, skippedBackoff, skippedNear);
+                DebugTrace.describePlayer(player), records.size(), candidates.size(), candidates.size() > MAX_UNLOADED_PETS_PER_AUTO_RUN, skippedSitting, skippedDimension, skippedLoaded, skippedQuarantined, skippedBackoff, skippedNear);
 
-        return new AutoRecallBatch(candidates, hasMoreCandidates);
+        return candidates;
     }
 
     private void scheduleCheck(PlayerAutoState state, long now, String reason) {
@@ -357,31 +336,22 @@ public final class AutoPetRecallController {
         }
     }
 
-    private void handleBatchCompleted(MinecraftServer server, ServerPlayer player, UUID playerUuid, AutoRecallBatch batch, RecallSummary summary) {
-        if (server.overworld() == null) {
+    private void handleBatchCompleted(MinecraftServer server, ServerPlayer player, PlayerAutoState state,
+            List<PetRecord> batch, RecallSummary summary) {
+        if (server.overworld() == null || this.playerStates.get(player.getUUID()) != state) {
             return;
         }
-
-        PlayerAutoState callbackState = this.playerStates.get(playerUuid);
-        if (callbackState == null) {
-            return;
+        // A jump cancels the service's in-flight work; keep that selection until the owner lands.
+        if (!PetRecallService.isPlayerGroundedForRecall(player) && player.isAlive() && !player.isRemoved()
+                && batch.getFirst().dimensionId().equals(VersionCompat.getDimensionId(player))) {
+            this.restoreBatch(state, batch);
         }
-
-        long callbackNow = server.overworld().getGameTime();
-        if (summary.recalled > 0 && batch.hasMoreCandidates()) {
-            DebugTrace.log("auto-recall", "Auto recall batch partial success for %s recalled=%d skipped=%d failed=%d continuingNextTick",
-                    DebugTrace.describePlayer(player), summary.recalled, summary.skipped, summary.failed);
-            callbackState.continueNextBatchTick = callbackNow + 1L;
-            callbackState.nextRecallTick = callbackNow + 1L;
-            return;
-        }
-
-        callbackState.continueNextBatchTick = -1L;
-        if (summary.recalled > 0) {
-            callbackState.nextRecallTick = callbackNow + AUTO_RECALL_COOLDOWN_TICKS;
-        }
-        DebugTrace.log("auto-recall", "Auto recall batch finished for %s recalled=%d skipped=%d failed=%d nextRecallTick=%d",
-                DebugTrace.describePlayer(player), summary.recalled, summary.skipped, summary.failed, callbackState.nextRecallTick);
+        long now = server.overworld().getGameTime();
+        state.continueNextBatchTick = state.pendingPets.isEmpty() ? -1L : now + 1L;
+        state.nextRecallTick = state.pendingPets.isEmpty() ? now + AUTO_RECALL_COOLDOWN_TICKS : now + 1L;
+        DebugTrace.log("auto-recall", "Auto batch finished for %s recalled=%d skipped=%d failed=%d remaining=%d nextTick=%d",
+                DebugTrace.describePlayer(player), summary.recalled, summary.skipped, summary.failed,
+                state.pendingPets.size(), state.nextRecallTick);
     }
 
     private void applyBackoff(java.util.List<PetRecord> candidates, long backoffUntilTick) {
@@ -410,6 +380,7 @@ public final class AutoPetRecallController {
     }
 
     private static final class PlayerAutoState {
+        final ArrayDeque<PetRecord> pendingPets = new ArrayDeque<>();
         boolean initialized;
         long lastChunkPosLong;
         String lastDimensionId = "";
@@ -425,9 +396,4 @@ public final class AutoPetRecallController {
         long joinRepairTick;
     }
 
-    private record AutoRecallBatch(java.util.List<PetRecord> records, boolean hasMoreCandidates) {
-        private static AutoRecallBatch empty() {
-            return new AutoRecallBatch(java.util.List.of(), false);
-        }
-    }
 }

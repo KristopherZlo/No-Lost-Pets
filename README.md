@@ -13,7 +13,7 @@
 
 NoLostPets is a Fabric mod that recalls companion pets from loaded and unloaded chunks. Minecraft loads the source chunk, and the mod moves the existing entity to its owner.
 
-The `mc-26x` branch prepares a separate candidate jar for each Minecraft target from `26.1` through `26.3`. Code and test sources compile for these targets. Behavioral tests and in-game verification have not been run for this port. The `main` branch retains the `1.21.x` implementation.
+The `mc-26x` branch builds a separate candidate jar for each Minecraft target from `26.1` through `26.3`. Fabric GameTests cover recall behavior and automatic batches on each target. The `main` branch retains the `1.21.x` implementation.
 
 ## What Is This?
 
@@ -94,10 +94,12 @@ All commands require admin/operator permission.
 
 ### Automatic Recall
 
-- Automatic recall only targets unloaded pets.
+- Automatic recall selects unloaded pets when a check starts.
 - Pets must belong to the player, be in the same dimension, and not be sitting.
 - Automatic checks happen after join, respawn, world change, chunk movement, landing, and large travel events.
 - Automatic runs are throttled and batched so the server does not spam recall work every tick.
+- The selected group stays queued across batches of at most 16 pets, including pets loaded by earlier batches. No further movement is needed to finish the queue.
+- Jumping pauses the queue until landing; each teleport still checks current ownership and sitting state.
 - Join uses a short warmup and can do an owner-only loaded-pet repair scan when the index is empty.
 
 ### Pet Detection
@@ -115,6 +117,7 @@ All commands require admin/operator permission.
 ### Verification And Debugging
 
 - Built-in verify commands can exercise loaded recall, unloaded recall, sitting-pet skips, ownership protection, safe-spot rules, auto-recall speed, batch recall, and stale-record cleanup.
+- GameTests also cover 40 pets in one unloaded chunk, 60 standing and 20 sitting pets across five distant chunks, a failed first batch, and jumps between batches or during chunk loading.
 - `stats` commands expose indexed/runtime counters for live debugging.
 - Extra file tracing is available with `-Dnolostpets.debug=true`.
 
@@ -122,11 +125,11 @@ All commands require admin/operator permission.
 
 | Minecraft | Fabric API | Status |
 | --- | --- | --- |
-| `26.1` | `0.145.1+26.1` | Candidate; gameplay verification pending |
-| `26.1.1` | `0.145.4+26.1.1` | Candidate; gameplay verification pending |
-| `26.1.2` | `0.155.3+26.1.2` | Candidate; gameplay verification pending |
-| `26.2` | `0.161.0+26.2` | Candidate; gameplay verification pending |
-| `26.3` | `0.162.0+26.3` | Candidate; gameplay verification pending |
+| `26.1` | `0.145.1+26.1` | Candidate; GameTests passed |
+| `26.1.1` | `0.145.4+26.1.1` | Candidate; GameTests passed |
+| `26.1.2` | `0.155.3+26.1.2` | Candidate; GameTests passed |
+| `26.2` | `0.161.0+26.2` | Candidate; GameTests passed |
+| `26.3` | `0.162.0+26.3` | Candidate; GameTests passed |
 
 These targets require Java `25`, Fabric Loader `0.19.5` or later, and the matching Fabric API. Each jar declares one exact Minecraft version.
 
