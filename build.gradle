@@ -9,17 +9,9 @@ import java.util.UUID
 version = project.mod_version
 group = project.maven_group
 
-def supportedMinecraftMin = (findProperty("supported_minecraft_min") ?: project.minecraft_version).toString()
-def supportedMinecraftMax = (findProperty("supported_minecraft_max") ?: project.minecraft_version).toString()
-def supportedMinecraftDisplay = supportedMinecraftMin == supportedMinecraftMax
-        ? supportedMinecraftMin
-        : "${supportedMinecraftMin}-${supportedMinecraftMax}"
-def minecraftVersionRange = supportedMinecraftMin == supportedMinecraftMax
-        ? "~${project.minecraft_version}"
-        : ">=${supportedMinecraftMin} <=${supportedMinecraftMax}"
-def artifactVersion = supportedMinecraftMin == supportedMinecraftMax
-        ? project.version.toString()
-        : "${project.version}+mc${supportedMinecraftDisplay}"
+// Minecraft changes binary method signatures within this line; compile a JAR for each exact version.
+def minecraftVersionRange = project.minecraft_version.toString()
+def artifactVersion = "${project.version}+mc${project.minecraft_version}"
 def loomRunDir = findProperty("loom_run_dir")
 def loomTestUsername = (findProperty("loom_test_username") ?: "NoLostPetsTest").toString()
 def loomTestUuid = (findProperty("loom_test_uuid")
@@ -113,6 +105,29 @@ java {
     withSourcesJar()
 }
 
+sourceSets {
+    upgradeTest {
+        compileClasspath += sourceSets.main.compileClasspath + sourceSets.main.output
+    }
+}
+tasks.named("compileUpgradeTestJava") {
+    doFirst {
+        if (project.minecraft_version.toString() != "1.21.11") {
+            throw new GradleException("The saved-world seed helper targets 1.21.11; use verify-world-upgrades.ps1 from the mc-26x checkout.")
+        }
+    }
+}
+tasks.register("upgradeTestJar", Jar) {
+    from sourceSets.upgradeTest.output
+    archiveClassifier = "upgrade-test-dev"
+}
+tasks.register("remapUpgradeTestJar", net.fabricmc.loom.task.RemapJarTask) {
+    dependsOn tasks.named("upgradeTestJar")
+    inputFile = tasks.named("upgradeTestJar").flatMap { it.archiveFile }
+    archiveClassifier = "upgrade-test"
+    addNestedDependencies = false
+}
+
 tasks.named("jar") {
     archiveVersion = artifactVersion
 }
@@ -125,13 +140,13 @@ tasks.named("remapJar") {
     archiveVersion = artifactVersion
 }
 
-tasks.register("buildUniversalJar", Copy) {
+tasks.register("stageArtifacts", Copy) {
     dependsOn tasks.named("remapJar"), tasks.named("sourcesJar")
     from(tasks.named("remapJar").flatMap { it.archiveFile })
     from(tasks.named("sourcesJar").flatMap { it.archiveFile })
-    into layout.projectDirectory.dir("dist/universal")
+    into layout.projectDirectory.dir("dist/1.21x/${project.minecraft_version}")
 }
 
 tasks.named("build") {
-    finalizedBy tasks.named("buildUniversalJar")
+    finalizedBy tasks.named("stageArtifacts")
 }

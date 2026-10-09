@@ -11,7 +11,7 @@
 >
 > Safe. Automatic. Server-side. Built for real lost pets.
 
-NoLostPets is a Fabric mod for Minecraft `1.21.8` through `1.21.11` that brings companion pets back to their owner, including pets stored in unloaded chunks. Recovery temporarily loads the source chunk through Minecraft, then teleports the existing entity. It is built as one universal jar for the full `1.21.8-1.21.11` line.
+NoLostPets is a Fabric mod for Minecraft `1.21.8` through `1.21.11` that brings companion pets back to their owner, including pets stored in unloaded chunks. Recovery temporarily loads the source chunk through Minecraft, then teleports the existing entity. Each Minecraft version has its own JAR because game method signatures change between releases.
 
 For a shorter storefront-style description, see [MODRINTH_DESCRIPTION.md](MODRINTH_DESCRIPTION.md).
 
@@ -58,7 +58,7 @@ If the real problem is "my pet is lost somewhere outside simulation distance", t
 - Cleans up stale records after repeated misses.
 - Supports vanilla tameables and many modded pets with standard owner/sit NBT.
 - Includes built-in admin stats and verify/self-test commands.
-- Ships as one universal jar for Minecraft `1.21.8` through `1.21.11`.
+- Ships as a separate JAR for each supported Minecraft version.
 
 ## Commands
 
@@ -133,7 +133,7 @@ All commands require admin/operator permission.
 
 1. Install Fabric Loader for your Minecraft version.
 2. Install the matching Fabric API version.
-3. Put the universal `NoLostPets` jar into the server `mods` folder.
+3. Put the `NoLostPets` JAR for your exact Minecraft version into the server `mods` folder.
 4. Start the server.
 
 Clients do not need the mod on a dedicated server.
@@ -194,13 +194,13 @@ On Windows:
 .\gradlew.bat build
 ```
 
-To build the universal artifact with the helper script:
+To build artifacts for all four Minecraft versions with the helper script:
 
 ```powershell
-.\build-universal.ps1
+.\scripts\build-1.21x.ps1
 ```
 
-Artifacts are written to `dist/universal/`.
+The helper writes artifacts to `dist/1.21x/`. A direct Gradle build targets `minecraft_version` in `gradle.properties` and writes artifacts to `dist/1.21x/<version>/`.
 
 ## Local Test Clients
 
@@ -256,7 +256,8 @@ For local multi-version runs in this repo, the file is version-specific:
 
 - `src/main/` contains the mod logic, commands, tracking, recall service, and mixins.
 - `src/gametest/` contains Fabric game tests.
-- `scripts/` contains helper scripts for universal builds and per-version client runs.
+- `src/upgradeTest/` contains the separate helper that seeds saved-world upgrade tests on Minecraft 1.21.11. The `mc-26x` checkout runs the upgrades.
+- `scripts/` contains helper scripts for per-version builds and client runs.
 - `FABRIC_COMPATIBILITY_NOTES.md` documents the verified Fabric version matrix for the `1.21.x` line.
 
 ## License

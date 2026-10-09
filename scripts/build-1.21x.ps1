@@ -130,8 +130,6 @@ foreach ($version in $Versions) {
         remapJar `
         sourcesJar `
         "-Pminecraft_version=$version" `
-        "-Psupported_minecraft_min=$version" `
-        "-Psupported_minecraft_max=$version" `
         "-Pyarn_mappings=$($target.yarn)" `
         "-Ploader_version=$($target.loader)" `
         "-Pfabric_version=$($target.fabric_api)" `
@@ -141,10 +139,7 @@ foreach ($version in $Versions) {
         exit $LASTEXITCODE
     }
 
-    $jar = Get-ChildItem (Join-Path $repoRoot "build\libs\*.jar") |
-        Where-Object { $_.Name -notlike "*-sources.jar" } |
-        Sort-Object LastWriteTime -Descending |
-        Select-Object -First 1
+    $jar = Get-Item -LiteralPath (Join-Path $repoRoot "build/libs/NoLostPets-$($target.mod_version)+mc$version.jar")
 
     if (-not $jar) {
         throw "No remapped jar produced for $version"
