@@ -172,18 +172,25 @@ public final class PetIndexState extends SavedData {
     private static DataResult<PetIndexState> validate(Map<UUID, PetRecord> pets) {
         for (Map.Entry<UUID, PetRecord> entry : pets.entrySet()) {
             PetRecord record = entry.getValue();
-            if (!entry.getKey().equals(record.petUuid())
-                    || Identifier.tryParse(record.entityTypeId()) == null
-                    || Identifier.tryParse(record.dimensionId()) == null
-                    || !Double.isFinite(record.x()) || !Double.isFinite(record.y()) || !Double.isFinite(record.z())
-                    || !Float.isFinite(record.health()) || record.health() < 0.0F) {
+            if (!isValid(entry.getKey(), record)) {
                 return DataResult.error(() -> "Invalid pet record: " + entry.getKey());
             }
         }
         return DataResult.success(new PetIndexState(pets));
     }
 
+    private static boolean isValid(UUID key, PetRecord record) {
+        return key != null && record != null && key.equals(record.petUuid()) && record.ownerUuid() != null
+                && record.entityTypeId() != null && Identifier.tryParse(record.entityTypeId()) != null
+                && record.dimensionId() != null && Identifier.tryParse(record.dimensionId()) != null
+                && Double.isFinite(record.x()) && Double.isFinite(record.y()) && Double.isFinite(record.z())
+                && Float.isFinite(record.health()) && record.health() >= 0.0F;
+    }
+
     public void put(PetRecord record) {
+        if (!isValid(record == null ? null : record.petUuid(), record)) {
+            throw new IllegalArgumentException("Invalid pet record; existing index was not changed.");
+        }
         PetRecord previous = this.pets.put(record.petUuid(), record);
         DebugTrace.log("index", "PUT %s previous=%s", DebugTrace.describeRecord(record), DebugTrace.describeRecord(previous));
         if (previous != null && !previous.ownerUuid().equals(record.ownerUuid())) {

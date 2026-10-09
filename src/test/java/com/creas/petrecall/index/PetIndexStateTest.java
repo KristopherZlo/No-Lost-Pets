@@ -3,6 +3,9 @@ package com.creas.petrecall.index;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.util.Collection;
 import java.util.UUID;
@@ -71,6 +74,38 @@ class PetIndexStateTest {
         PetRecord loaded = state.getPet(record.petUuid());
         assertNotNull(loaded);
         assertEquals(record.chunkPosLong(), loaded.chunkPosLong());
+    }
+
+    @Test
+    void invalidReplacementCannotLoseRecordOrMoveOwnerBucket() {
+        PetIndexState state = new PetIndexState();
+        UUID owner = UUID.randomUUID();
+        UUID wrongOwner = UUID.randomUUID();
+        PetRecord healthy = record(UUID.randomUUID(), owner, 3, -2);
+        state.put(healthy);
+        state.setDirty(false);
+        PetRecord invalid = new PetRecord(healthy.petUuid(), wrongOwner, "minecraft:wolf", "minecraft:overworld",
+                healthy.chunkPosLong(), Double.NaN, 64.0D, 1.0D, false, 20.0F);
+
+        assertThrows(IllegalArgumentException.class, () -> state.put(invalid));
+        assertEquals(healthy, state.getPet(healthy.petUuid()));
+        assertEquals(java.util.List.of(healthy), new java.util.ArrayList<>(state.getPetsForOwner(owner)));
+        assertTrue(state.getPetsForOwner(wrongOwner).isEmpty());
+        assertEquals(1, state.size());
+        assertFalse(state.isDirty());
+    }
+
+    @Test
+    void invalidNewRecordCannotMakeSavedIndexUnreadable() {
+        PetIndexState state = new PetIndexState();
+        UUID owner = UUID.randomUUID();
+        PetRecord invalid = new PetRecord(UUID.randomUUID(), owner, "minecraft:wolf", "dimension with spaces",
+                0L, 1.0D, 64.0D, 1.0D, false, 20.0F);
+
+        assertThrows(IllegalArgumentException.class, () -> state.put(invalid));
+        assertEquals(0, state.size());
+        assertTrue(state.getPetsForOwner(owner).isEmpty());
+        assertFalse(state.isDirty());
     }
 
     private static PetRecord record(UUID petUuid, UUID ownerUuid, int chunkX, int chunkZ) {

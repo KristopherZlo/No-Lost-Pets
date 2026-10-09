@@ -62,7 +62,7 @@ public final class AutoPetRecallController {
 
     public void scheduleImmediate(ServerPlayer player) {
         MinecraftServer server = VersionCompat.getServer(player);
-        if (server == null || server.overworld() == null) {
+        if (server == null || server.overworld() == null || !PetIndexState.isAvailable(server)) {
             return;
         }
         if (this.suppressedPlayers.contains(player.getUUID())) {
@@ -75,7 +75,7 @@ public final class AutoPetRecallController {
 
     public void scheduleAfterJoin(ServerPlayer player) {
         MinecraftServer server = VersionCompat.getServer(player);
-        if (server == null || server.overworld() == null) {
+        if (server == null || server.overworld() == null || !PetIndexState.isAvailable(server)) {
             return;
         }
         if (this.suppressedPlayers.contains(player.getUUID())) {

@@ -71,9 +71,13 @@ public final class PetTracker {
         this.loadedPets.put(entity.getUUID(), entity);
         PetRecallMod.getRecallService().onPetObserved(entity.getUUID());
         PetIndexState state = PetIndexState.get(server);
-        PetRecord record = PetRecord.fromEntity(world, entity, ownedPet.ownerUuid(), ownedPet.sitting(), ownedPet.health());
-        DebugTrace.log("tracker", "Observed supported pet: %s", DebugTrace.describeRecord(record));
-        state.put(record);
+        try {
+            PetRecord record = PetRecord.fromEntity(world, entity, ownedPet.ownerUuid(), ownedPet.sitting(), ownedPet.health());
+            DebugTrace.log("tracker", "Observed supported pet: %s", DebugTrace.describeRecord(record));
+            state.put(record);
+        } catch (RuntimeException error) {
+            PetRecallMod.LOGGER.warn("Cannot index pet {}; keeping its previous record", entity.getUUID(), error);
+        }
     }
 
     @Nullable
