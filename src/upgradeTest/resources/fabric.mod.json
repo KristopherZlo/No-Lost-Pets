@@ -1,0 +1,9 @@
+{
+  "schemaVersion": 1,
+  "id": "pet_recall_upgrade_test",
+  "version": "1.0.0",
+  "name": "NoLostPets saved-world upgrade test",
+  "environment": "server",
+  "entrypoints": { "main": ["com.creas.petrecall.upgrade.PetRecallUpgradeTest"] },
+  "depends": { "fabricloader": ">=0.19.5", "fabric-api": "*", "pet_recall": "*", "minecraft": ">=26.1 <=26.3", "java": ">=25" }
+}

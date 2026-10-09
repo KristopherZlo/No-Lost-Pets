@@ -110,6 +110,16 @@ java {
     withSourcesJar()
 }
 
+sourceSets {
+    upgradeTest {
+        compileClasspath += sourceSets.main.compileClasspath + sourceSets.main.output
+    }
+}
+tasks.register("upgradeTestJar", Jar) {
+    from sourceSets.upgradeTest.output
+    archiveClassifier = "upgrade-test"
+}
+
 tasks.named("jar") {
     archiveVersion = artifactVersion
 }

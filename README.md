@@ -187,7 +187,7 @@ In the world save as server persistent state under the mod's saved data.
 
 Use JDK `25`. The Gradle wrapper selects Gradle `9.6.0`; Loom `1.17.21` uses Minecraft's official, unobfuscated names.
 
-On Windows, compile the mod and both test source sets, then package all five targets:
+On Windows, compile the mod, unit tests and GameTest sources, then package all five targets:
 
 ```powershell
 .\scripts\build-26x.ps1
@@ -220,6 +220,16 @@ The following commands execute tests when verification is authorized:
 ```
 
 `verify-all.ps1` requires exit code zero, a successful Gradle build, the complete discovered GameTest count, and JUnit reports with all discovered tests executed and no failures, errors, or skips. A timeout or missing result fails verification. Logs are stored under `build/tmp/verify-all/`.
+
+To verify saved-world upgrades with an old production JAR, keep the `main` checkout beside this checkout and run:
+
+```powershell
+.\scripts\verify-world-upgrades.ps1 -BaselineJar '..\pet-recall\dist\1.21x\NoLostPets-fabric-1.21.11.jar'
+```
+
+This creates a disposable world on Minecraft 1.21.11 using the supplied old mod. It upgrades offline copies directly to 26.3 and through 26.1, 26.1.1, 26.1.2, 26.2 and 26.3, with a separate server restart after every upgrade. It checks the saved index before loading distant chunks, then checks six pets, two owners, both dimensions and an ordinary neighbor. Finally it recalls pets within each dimension and restarts again to check the resulting save. Health, custom names, tags, collars, UUIDs, ownership, sitting state and duplicate entities are checked. Reports include the actual mod version and JAR hash under `build/world-upgrades/<run>/`. The source world must remain byte-for-byte unchanged.
+
+JDK 21 and 25, cached Minecraft/Fabric dependencies and the five packaged candidates are required. The helper mods are built separately from `src/upgradeTest/`; production JARs do not include them. The script downloads dedicated server launchers from Fabric. Custom companion mods and client/LAN behavior are outside this saved-world test.
 
 LAN verification starts two isolated clients. Its host world must already exist at `run/26.3/26.3-lan-host/saves/Testing/`. Create a disposable test world there with `run-client.ps1 -Version 26.3 -RunName 26.3-lan-host` before running LAN verification.
 
