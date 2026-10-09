@@ -44,10 +44,6 @@ repositories {
 }
 
 loom {
-    runs.configureEach {
-        runDir = loomRunDir ?: "run/${project.minecraft_version}/${name}"
-    }
-
     runs.named("client") {
         programArgs "--username", loomTestUsername, "--uuid", loomTestUuid
         lanSmokeVmProperties.each { key, value ->
@@ -74,6 +70,17 @@ fabricApi {
         enableClientGameTests = false
         eula = true
     }
+}
+
+// Test configuration creates its run after the other Loom runs.
+loom.runs.configureEach {
+    runDir = loomRunDir ?: "run/${project.minecraft_version}/${name}"
+}
+loom.runs.named("gameTest") {
+    vmArg "-Dfabric-api.gametest.report-file=${layout.buildDirectory.file("gametest-results/${project.minecraft_version}.xml").get().asFile}"
+}
+tasks.named("runGameTest") {
+    doFirst { layout.buildDirectory.dir("gametest-results").get().asFile.mkdirs() }
 }
 
 processResources {

@@ -5,6 +5,9 @@
   "name": "NoLostPets Game Tests",
   "environment": "*",
   "entrypoints": {
+    "main": [
+      "com.creas.petrecall.gametest.PetRecallGameTestBootstrap"
+    ],
     "fabric-gametest": [
       "com.creas.petrecall.gametest.PetRecallGameTests",
       "com.creas.petrecall.gametest.PetRecallBehaviorGameTests"

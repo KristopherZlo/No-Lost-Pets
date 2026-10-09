@@ -50,7 +50,7 @@ function Invoke-VersionVerify {
         [string]$RepoRoot,
         [string]$LogRoot,
         [int]$TimeoutSeconds,
-        [int]$ExpectedGameTests,
+        [string[]]$ExpectedGameTests,
         [int]$ExpectedUnitTests
     )
 
@@ -123,7 +123,16 @@ function Invoke-VersionVerify {
                 $exitCode = $process.ExitCode
                 $finalStdout = Get-Content -LiteralPath $stdoutLog -Raw -Encoding UTF8
                 $finalStderr = if (Test-Path -LiteralPath $stderrLog) { Get-Content -LiteralPath $stderrLog -Raw -Encoding UTF8 } else { "" }
-                $testsRan = $finalStdout -match "All ([1-9][0-9]*) required tests passed" -and [int]$Matches[1] -eq $ExpectedGameTests
+                $testsRan = $finalStdout -match "All [1-9][0-9]* required tests passed"
+                $gameReport = Join-Path $RepoRoot "build/gametest-results/$version.xml"
+                if ((Test-Path -LiteralPath $gameReport) -and (Get-Item -LiteralPath $gameReport).LastWriteTime -ge $startedAt.AddSeconds(-2)) {
+                    [xml]$gameXml = Get-Content -LiteralPath $gameReport -Raw
+                    $gameCases = @($gameXml.SelectNodes('//testcase') | Where-Object { $_.name -like 'pet_recall_gametest:*' })
+                    $gameNames = @($gameCases | ForEach-Object { [string]$_.name })
+                    $testsRan = $testsRan -and $gameCases.Count -eq $ExpectedGameTests.Count -and
+                        @($gameXml.SelectNodes('//failure|//error|//skipped')).Count -eq 0 -and
+                        @(Compare-Object $ExpectedGameTests $gameNames).Count -eq 0
+                } else { $testsRan = $false }
                 $unitRan = 0
                 $unitFailed = 0
                 foreach ($report in Get-ChildItem -LiteralPath (Join-Path $RepoRoot 'build/test-results/test') -Filter 'TEST-*.xml' -ErrorAction SilentlyContinue) {
@@ -174,15 +183,19 @@ New-Item -ItemType Directory -Force -Path $logRoot | Out-Null
 $env:JAVA_HOME = $resolvedJavaHome
 $env:Path = "$resolvedJavaHome\bin;$env:Path"
 
-$expectedGameTests = 0
+$expectedGameTests = @()
 $expectedUnitTests = 0
 foreach ($file in Get-ChildItem (Join-Path $repoRoot 'src/gametest/java') -Recurse -Filter '*.java') {
-    $expectedGameTests += [regex]::Matches((Get-Content $file.FullName -Raw), '@GameTest\b').Count
+    $testClass = [regex]::Replace($file.BaseName, '([a-z0-9])([A-Z])', '$1_$2').ToLowerInvariant()
+    foreach ($method in [regex]::Matches((Get-Content $file.FullName -Raw), '@GameTest\s*\([^)]*\)\s*public void (\w+)\(')) {
+        $testMethod = [regex]::Replace($method.Groups[1].Value, '([a-z0-9])([A-Z])', '$1_$2').ToLowerInvariant()
+        $expectedGameTests += "pet_recall_gametest:${testClass}_$testMethod"
+    }
 }
 foreach ($file in Get-ChildItem (Join-Path $repoRoot 'src/test/java') -Recurse -Filter '*.java') {
     $expectedUnitTests += [regex]::Matches((Get-Content $file.FullName -Raw), '@Test\b').Count
 }
-if ($expectedGameTests -eq 0 -or $expectedUnitTests -eq 0) { throw 'No tests discovered in source sets' }
+if ($expectedGameTests.Count -eq 0 -or $expectedUnitTests -eq 0) { throw 'No tests discovered in source sets' }
 
 $results = @()
 $targets = @()
