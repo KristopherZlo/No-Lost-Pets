@@ -7,6 +7,8 @@ import com.creas.petrecall.recall.PetRecallService;
 import com.creas.petrecall.recall.PetRecallService.RecallSummary;
 import com.creas.petrecall.runtime.PetTracker;
 import com.creas.petrecall.util.VersionCompat;
+import com.mojang.serialization.Codec;
+import com.mojang.serialization.DataResult;
 import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -29,6 +31,7 @@ import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.resources.Identifier;
 import net.minecraft.world.level.ChunkPos;
 import net.minecraft.world.level.block.Blocks;
+import net.minecraft.world.level.storage.ValueOutput;
 import net.minecraft.world.phys.Vec3;
 
 public final class PetRecallBehaviorGameTests {
@@ -178,6 +181,65 @@ public final class PetRecallBehaviorGameTests {
         check(context, wolf.getVehicle() == vehicle && vehicle.hasPassenger(wolf), "Vehicle relationship must survive");
         f.assertIdle();
         f.cleanup(wolf, vehicle);
+        context.succeed();
+    }
+
+    @GameTest(maxTicks = 40)
+    public void failedOwnerEncodingKeepsModdedPetRecordAndDoesNotTeleport(GameTestHelper context) {
+        Fixture f = new Fixture(context);
+        NbtCompanion pet = f.companion(new BlockPos(1, 2, 1));
+        try {
+            PetRecord before = f.record(pet);
+            Vec3 originalPosition = position(pet);
+            pet.failOwnerEncoding = true;
+            f.tracker.observe(pet, f.world);
+            context.assertValueEqual(before, f.record(pet), Component.literal("Encoding failure must keep the complete previous record"));
+            check(context, f.tracker.getOwnerRecords(f.world.getServer(), f.player.getUUID()).contains(before),
+                    "Encoding failure must keep the owner lookup");
+            check(context, f.tracker.getLoadedPet(pet.getUUID()) == pet, "Encoding failure must keep the loaded entity");
+            AtomicReference<RecallSummary> result = new AtomicReference<>();
+            check(context, f.service.recallSpecificPetsForPlayerAsync(f.player, List.of(before), true, result::set),
+                    "Recall request must start");
+            check(context, result.get() != null, "Loaded recall must complete despite encoding failure");
+            context.assertValueEqual(1, result.get().failed, Component.literal("Unreadable ownership must fail safely"));
+            context.assertValueEqual(0, result.get().recalled, Component.literal("Unreadable pet must not be recalled"));
+            context.assertValueEqual(originalPosition, position(pet), Component.literal("Unreadable pet must not move"));
+            context.assertValueEqual(before, f.record(pet), Component.literal("Recall failure must keep the previous record"));
+            check(context, f.world.getEntity(pet.getUUID()) == pet && !pet.isRemoved(), "Original pet must survive");
+            f.assertIdle();
+        } finally {
+            pet.failOwnerEncoding = false;
+            f.cleanup(pet);
+        }
+        context.succeed();
+    }
+
+    @GameTest(maxTicks = 40)
+    public void ridingModdedCompanionKeepsOwnershipAndIsSkipped(GameTestHelper context) {
+        Fixture f = new Fixture(context);
+        NbtCompanion pet = f.companion(new BlockPos(1, 2, 1));
+        Pig vehicle = context.spawnWithNoFreeWill(TestEntityTypes.PIG, new BlockPos(1, 2, 1));
+        try {
+            check(context, pet.startRiding(vehicle, true, true), "Fixture must establish riding relationship");
+            f.tracker.observe(pet, f.world);
+            PetRecord record = f.record(pet);
+            context.assertValueEqual(f.player.getUUID(), record.ownerUuid(), Component.literal("Passenger ownership must remain readable"));
+            check(context, f.tracker.getLoadedPet(pet.getUUID()) == pet, "Passenger must remain cached");
+            Vec3 originalPosition = position(pet);
+            AtomicReference<RecallSummary> result = new AtomicReference<>();
+            check(context, f.service.recallSpecificPetsForPlayerAsync(f.player, List.of(record), true, result::set),
+                    "Recall request must start");
+            check(context, result.get() != null, "Loaded recall must complete");
+            context.assertValueEqual(1, result.get().skipped, Component.literal("Modded passenger must be skipped"));
+            context.assertValueEqual(0, result.get().failed, Component.literal("Being a passenger is not an ownership error"));
+            context.assertValueEqual(0, result.get().recalled, Component.literal("Modded passenger must not be recalled"));
+            context.assertValueEqual(originalPosition, position(pet), Component.literal("Passenger must not move"));
+            check(context, pet.getVehicle() == vehicle && vehicle.hasPassenger(pet), "Vehicle relationship must survive");
+            context.assertValueEqual(record, f.record(pet), Component.literal("Passenger record must survive"));
+            f.assertIdle();
+        } finally {
+            f.cleanup(pet, vehicle);
+        }
         context.succeed();
     }
 
@@ -403,6 +465,29 @@ public final class PetRecallBehaviorGameTests {
         return player;
     }
 
+    private static final class NbtCompanion extends Pig {
+        private static final Codec<String> FAILING_OWNER_CODEC = Codec.STRING.validate(
+                value -> DataResult.error(() -> "Injected owner encoding failure"));
+        private final UUID ownerUuid;
+        boolean failOwnerEncoding;
+
+        NbtCompanion(ServerLevel world, UUID ownerUuid) {
+            super(TestEntityTypes.PIG, world);
+            this.ownerUuid = ownerUuid;
+        }
+
+        @Override
+        protected void addAdditionalSaveData(ValueOutput output) {
+            super.addAdditionalSaveData(output);
+            if (failOwnerEncoding) {
+                output.store("Owner", FAILING_OWNER_CODEC, ownerUuid.toString());
+            } else {
+                output.putString("Owner", ownerUuid.toString());
+            }
+            output.putBoolean("Sitting", false);
+        }
+    }
+
     private static final class Fixture {
         final GameTestHelper context;
         final ServerLevel world;
@@ -433,6 +518,16 @@ public final class PetRecallBehaviorGameTests {
             wolf.setNoAi(true);
             tracker.observe(wolf, world);
             return wolf;
+        }
+
+        NbtCompanion companion(BlockPos pos) {
+            NbtCompanion pet = new NbtCompanion(world, player.getUUID());
+            pet.snapTo(context.absolutePos(pos), 0, 0);
+            pet.setNoAi(true);
+            pet.setPersistenceRequired();
+            check(context, world.addFreshEntity(pet), "Companion must be added to the world");
+            tracker.observe(pet, world);
+            return pet;
         }
 
         PetRecord record(Entity entity) {
