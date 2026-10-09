@@ -161,9 +161,13 @@ public final class PetOwnershipUtil {
 
     @Nullable
     private static NbtCompound writeEntityNbt(Entity entity) {
-        NbtWriteView view = NbtWriteView.create(ErrorReporter.EMPTY, entity.getRegistryManager());
-        if (!entity.saveData(view)) {
-            throw new IllegalStateException("Cannot inspect ownership of entity " + entity.getUuid());
+        ErrorReporter.Impl problems = new ErrorReporter.Impl();
+        NbtWriteView view = NbtWriteView.create(problems, entity.getRegistryManager());
+        // Inspect passengers too, and never interpret partially encoded data as lost ownership.
+        entity.writeData(view);
+        if (!problems.isEmpty()) {
+            throw new IllegalStateException("Cannot inspect ownership of entity " + entity.getUuid()
+                    + ": " + problems.getErrorsAsString());
         }
         return view.getNbt();
     }
