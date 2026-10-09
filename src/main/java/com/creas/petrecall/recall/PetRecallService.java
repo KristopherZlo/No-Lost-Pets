@@ -365,6 +365,7 @@ public final class PetRecallService {
 
             @Override
             public void complete(ChunkRecallScheduler.Completion completion) {
+                DebugTrace.log("recall", "Chunk load completed result=%s %s", completion.result(), DebugTrace.describeRecord(record));
                 if (runner.finished) {
                     return;
                 }

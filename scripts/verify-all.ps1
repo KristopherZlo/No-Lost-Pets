@@ -122,7 +122,8 @@ function Invoke-VersionVerify {
         [string]$GradlePath,
         [string]$RepoRoot,
         [string]$LogRoot,
-        [int]$TimeoutSeconds
+        [int]$TimeoutSeconds,
+        [string[]]$ExpectedGameTests
     )
 
     $version = $Target.version
@@ -140,8 +141,8 @@ function Invoke-VersionVerify {
     }
 
     $scriptLines = @(
-        '$ErrorActionPreference = ''Stop'''
-        ('& ''{0}'' ''test'' ''runGameTest'' ''--no-daemon'' ''-Pminecraft_version={1}'' ''-Pyarn_mappings={2}'' ''-Ploader_version={3}'' ''-Pfabric_version={4}'' ''-Pmod_version={5}''' -f $GradlePath, $Target.version, $Target.yarn, $Target.loader, $Target.fabric_api, $Target.mod_version)
+        '$ErrorActionPreference = ''Continue'''
+        ('& ''{0}'' ''test'' ''runGameTest'' ''--rerun-tasks'' ''--no-daemon'' ''--console=plain'' ''-Pminecraft_version={1}'' ''-Pyarn_mappings={2}'' ''-Ploader_version={3}'' ''-Pfabric_version={4}'' ''-Pmod_version={5}'' ''-Ploom_run_dir=build/run/gameTest/{1}''' -f $GradlePath, $Target.version, $Target.yarn, $Target.loader, $Target.fabric_api, $Target.mod_version)
         'exit $LASTEXITCODE'
     )
     [System.IO.File]::WriteAllLines($runnerScript, $scriptLines)
@@ -195,6 +196,15 @@ function Invoke-VersionVerify {
                 $finalStdout = Get-Content -LiteralPath $stdoutLog -Raw -Encoding UTF8
                 $finalStderr = if (Test-Path -LiteralPath $stderrLog) { Get-Content -LiteralPath $stderrLog -Raw -Encoding UTF8 } else { "" }
                 $testsRan = $finalStdout -match "All [1-9][0-9]* required tests passed"
+                $gameReport = Join-Path $RepoRoot "build/gametest-results/$version.xml"
+                if ((Test-Path -LiteralPath $gameReport) -and (Get-Item -LiteralPath $gameReport).LastWriteTime -ge $startedAt.AddSeconds(-2)) {
+                    [xml]$gameXml = Get-Content -LiteralPath $gameReport -Raw
+                    $gameCases = @($gameXml.SelectNodes('//testcase') | Where-Object { $_.name -like 'pet_recall_gametest:*' })
+                    $gameNames = @($gameCases | ForEach-Object { [string]$_.name })
+                    $testsRan = $testsRan -and $gameCases.Count -eq $ExpectedGameTests.Count -and
+                        @($gameXml.SelectNodes('//failure|//error|//skipped')).Count -eq 0 -and
+                        @(Compare-Object $ExpectedGameTests $gameNames).Count -eq 0
+                } else { $testsRan = $false }
                 $buildPassed = $finalStdout -match "BUILD SUCCESSFUL"
                 $testsFailed = $finalStdout -match "[1-9][0-9]* required tests failed"
                 $buildFailed = $finalStdout -match "BUILD FAILED" -or $finalStderr -match "BUILD FAILED"
@@ -236,6 +246,16 @@ New-Item -ItemType Directory -Force -Path $logRoot | Out-Null
 $env:JAVA_HOME = $resolvedJavaHome
 $env:Path = "$resolvedJavaHome\bin;$env:Path"
 
+$expectedGameTests = @()
+foreach ($file in Get-ChildItem (Join-Path $repoRoot 'src/gametest/java') -Recurse -Filter '*.java') {
+    $testClass = [regex]::Replace($file.BaseName, '([a-z0-9])([A-Z])', '$1_$2').ToLowerInvariant()
+    foreach ($method in [regex]::Matches((Get-Content $file.FullName -Raw), '@GameTest\s*\([^)]*\)\s*public void (\w+)\(')) {
+        $testMethod = [regex]::Replace($method.Groups[1].Value, '([a-z0-9])([A-Z])', '$1_$2').ToLowerInvariant()
+        $expectedGameTests += "pet_recall_gametest:${testClass}_$testMethod"
+    }
+}
+if ($expectedGameTests.Count -eq 0) { throw 'No GameTests discovered in source set' }
+
 $staleIds = Get-StaleRunGameTestProcesses -RepoRoot $repoRoot -CurrentPid $PID
 if ($staleIds.Count -gt 0) {
     Write-Host ("Cleaning stale runGameTest processes: " + ($staleIds -join ", "))
@@ -261,7 +281,8 @@ try {
             -GradlePath $gradle `
             -RepoRoot $repoRoot `
             -LogRoot $logRoot `
-            -TimeoutSeconds $TimeoutSeconds
+            -TimeoutSeconds $TimeoutSeconds `
+            -ExpectedGameTests $expectedGameTests
         $results += $result
 
         switch ($result.Status) {

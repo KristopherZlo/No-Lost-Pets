@@ -20,7 +20,7 @@ def minecraftVersionRange = supportedMinecraftMin == supportedMinecraftMax
 def artifactVersion = supportedMinecraftMin == supportedMinecraftMax
         ? project.version.toString()
         : "${project.version}+mc${supportedMinecraftDisplay}"
-def loomRunDir = (findProperty("loom_run_dir") ?: "run").toString()
+def loomRunDir = findProperty("loom_run_dir")
 def loomTestUsername = (findProperty("loom_test_username") ?: "NoLostPetsTest").toString()
 def loomTestUuid = (findProperty("loom_test_uuid")
         ?: UUID.nameUUIDFromBytes(("OfflinePlayer:" + loomTestUsername).getBytes(StandardCharsets.UTF_8)).toString())
@@ -47,10 +47,6 @@ repositories {
 }
 
 loom {
-    runs.configureEach {
-        runDir = loomRunDir
-    }
-
     runs.named("client") {
         programArgs "--username", loomTestUsername, "--uuid", loomTestUuid
         lanSmokeVmProperties.each { key, value ->
@@ -78,6 +74,17 @@ fabricApi {
         enableClientGameTests = false
         eula = true
     }
+}
+
+// Apply the requested directory to the run created by test configuration too.
+loom.runs.configureEach {
+    runDir = loomRunDir ?: (name == "gameTest" ? "build/run/gameTest/${project.minecraft_version}" : "run")
+}
+loom.runs.named("gameTest") {
+    vmArg "-Dfabric-api.gametest.report-file=${layout.buildDirectory.file("gametest-results/${project.minecraft_version}.xml").get().asFile}"
+}
+tasks.named("runGameTest") {
+    doFirst { layout.buildDirectory.dir("gametest-results").get().asFile.mkdirs() }
 }
 
 processResources {
