@@ -94,10 +94,12 @@ All commands require admin/operator permission.
 
 ### Automatic Recall
 
-- Automatic recall only targets unloaded pets.
+- Automatic recall selects unloaded pets when a check starts.
 - Pets must belong to the player, be in the same dimension, and not be sitting.
 - Automatic checks happen after join, respawn, world change, chunk movement, landing, and large travel events.
 - Automatic runs are throttled and batched so the server does not spam recall work every tick.
+- The selected group stays queued across batches of at most 16 pets, including pets loaded by earlier batches. No further movement is needed to finish the queue.
+- Jumping pauses the queue until landing; each teleport still checks current ownership and sitting state.
 - Join uses a short warmup and can do an owner-only loaded-pet repair scan when the index is empty.
 
 ### Pet Detection
@@ -115,6 +117,7 @@ All commands require admin/operator permission.
 ### Verification And Debugging
 
 - Built-in verify commands can exercise loaded recall, unloaded recall, sitting-pet skips, ownership protection, safe-spot rules, auto-recall speed, batch recall, and stale-record cleanup.
+- GameTests also cover 40 pets in one unloaded chunk, 60 standing and 20 sitting pets across five distant chunks, a failed first batch, and jumps between batches or during chunk loading.
 - `stats` commands expose indexed/runtime counters for live debugging.
 - Extra file tracing is available with `-Dnolostpets.debug=true`.
 

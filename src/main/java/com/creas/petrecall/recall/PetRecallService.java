@@ -129,6 +129,14 @@ public final class PetRecallService {
         return this.recallForPlayerAsync(player, onComplete, false, false, candidateRecords, false);
     }
 
+    // Automatic queues select unloaded pets up front; earlier batches can load their neighbours.
+    public boolean recallSelectedPetsForPlayerAsyncSilent(
+            ServerPlayerEntity player, List<PetRecord> records, Consumer<RecallSummary> onComplete
+    ) {
+        if (records.isEmpty()) return false;
+        return this.recallForPlayerAsync(player, onComplete, true, false, records, false);
+    }
+
     private boolean recallForPlayerAsync(
             ServerPlayerEntity player,
             Consumer<RecallSummary> onComplete,
