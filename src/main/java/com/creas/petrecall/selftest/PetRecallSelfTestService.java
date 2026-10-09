@@ -52,7 +52,7 @@ public final class PetRecallSelfTestService {
     }
 
     public boolean startSingleplayer(ServerPlayer player, Consumer<Component> reporter) {
-        if (this.activeSuite != null) {
+        if (this.activeSuite != null || !PetIndexState.isAvailable(VersionCompat.getServer(player))) {
             return false;
         }
         this.activeSuite = ActiveSuite.singleplayer(player, reporter, this::clearIfFinished);
@@ -60,7 +60,7 @@ public final class PetRecallSelfTestService {
     }
 
     public boolean startMultiplayer(ServerPlayer owner, ServerPlayer other, Consumer<Component> reporter) {
-        if (this.activeSuite != null) {
+        if (this.activeSuite != null || !PetIndexState.isAvailable(VersionCompat.getServer(owner))) {
             return false;
         }
         this.activeSuite = ActiveSuite.multiplayer(owner, other, reporter, this::clearIfFinished);
@@ -425,7 +425,7 @@ public final class PetRecallSelfTestService {
         @Nullable
         private Wolf spawnOwnedWolf(ServerPlayer owner, BlockPos standPos, String name, boolean sitting) {
             this.preparePad(this.baseWorld, standPos, 2);
-            Entity entity = EntityType.WOLF.spawn(this.baseWorld, null, standPos, EntitySpawnReason.COMMAND, true, false);
+            Entity entity = TestEntityTypes.WOLF.spawn(this.baseWorld, standPos, EntitySpawnReason.COMMAND);
             if (!(entity instanceof Wolf wolf)) {
                 return null;
             }

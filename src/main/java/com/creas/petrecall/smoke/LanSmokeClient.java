@@ -4,7 +4,6 @@ import com.creas.petrecall.PetRecallMod;
 import com.creas.petrecall.util.VersionCompat;
 import com.mojang.brigadier.exceptions.CommandSyntaxException;
 import java.io.IOException;
-import java.lang.reflect.Constructor;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
@@ -15,6 +14,7 @@ import net.fabricmc.api.ClientModInitializer;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.screens.ConnectScreen;
+import net.minecraft.client.gui.screens.TitleScreen;
 import net.minecraft.client.multiplayer.ServerData;
 import net.minecraft.client.multiplayer.TransferState;
 import net.minecraft.client.multiplayer.resolver.ServerAddress;
@@ -25,7 +25,6 @@ import net.minecraft.network.chat.Component;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
-import net.minecraft.world.level.GameType;
 import net.minecraft.world.phys.Vec3;
 
 public final class LanSmokeClient implements ClientModInitializer {
@@ -104,7 +103,7 @@ public final class LanSmokeClient implements ClientModInitializer {
                 if (!(server instanceof IntegratedServer integratedServer) || client.player == null) {
                     return;
                 }
-                if (!integratedServer.publishServer(GameType.CREATIVE, true, this.requestedPort)) {
+                if (!LanPublish.open(integratedServer, this.requestedPort)) {
                     this.fail(this.hostResultFile, "Integrated server refused to open to LAN", client);
                     return;
                 }
@@ -216,7 +215,7 @@ public final class LanSmokeClient implements ClientModInitializer {
         private void connect(Minecraft client, int port) {
             ServerAddress address = ServerAddress.parseString("127.0.0.1:" + port);
             ServerData info = new ServerData("NoLostPets LAN Smoke", "127.0.0.1:" + port, ServerData.Type.LAN);
-            ConnectScreen.startConnecting(client.screen, client, address, info, false, createCookieStorage());
+            ConnectScreen.startConnecting(new TitleScreen(), client, address, info, false, new TransferState(Map.of(), Map.of(), false));
             PetRecallMod.LOGGER.info("NoLostPets LAN smoke client connecting to 127.0.0.1:{}", port);
         }
 
@@ -265,22 +264,6 @@ public final class LanSmokeClient implements ClientModInitializer {
                 throw new IllegalStateException("Failed to write LAN smoke file " + path, e);
             }
         }
-    }
-
-    private static TransferState createCookieStorage() {
-        try {
-            for (Constructor<?> constructor : TransferState.class.getConstructors()) {
-                if (constructor.getParameterCount() == 1) {
-                    return (TransferState) constructor.newInstance(Map.of());
-                }
-                if (constructor.getParameterCount() == 3) {
-                    return (TransferState) constructor.newInstance(Map.of(), Map.of(), false);
-                }
-            }
-        } catch (ReflectiveOperationException e) {
-            throw new IllegalStateException("Failed to create cookie storage", e);
-        }
-        throw new IllegalStateException("Unsupported CookieStorage constructor");
     }
 
     private static final class RecordingCommandOutput implements CommandSource {

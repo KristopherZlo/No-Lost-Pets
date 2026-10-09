@@ -1,5 +1,6 @@
 package com.creas.petrecall.gametest;
 
+import com.creas.petrecall.selftest.TestEntityTypes;
 import com.creas.petrecall.index.PetIndexState;
 import com.creas.petrecall.index.PetRecord;
 import com.creas.petrecall.recall.PetRecallService;
@@ -24,7 +25,8 @@ import net.minecraft.world.entity.animal.pig.Pig;
 import net.minecraft.world.entity.animal.wolf.Wolf;
 import net.minecraft.world.item.DyeColor;
 import net.minecraft.world.item.ItemStack;
-import net.minecraft.world.item.Items;
+import net.minecraft.core.registries.BuiltInRegistries;
+import net.minecraft.resources.Identifier;
 import net.minecraft.world.level.ChunkPos;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.phys.Vec3;
@@ -167,7 +169,7 @@ public final class PetRecallBehaviorGameTests {
     public void ridingPetIsSkippedWithoutBreakingVehicleRelationship(GameTestHelper context) {
         Fixture f = new Fixture(context);
         Wolf wolf = f.wolf(new BlockPos(1, 2, 1));
-        Pig vehicle = context.spawnWithNoFreeWill(EntityType.PIG, new BlockPos(1, 2, 1));
+        Pig vehicle = context.spawnWithNoFreeWill(TestEntityTypes.PIG, new BlockPos(1, 2, 1));
         check(context, wolf.startRiding(vehicle, true, true), "Fixture must establish riding relationship");
         AtomicReference<RecallSummary> result = new AtomicReference<>();
         f.service.recallSpecificPetsForPlayerAsync(f.player, List.of(f.record(wolf)), true, result::set);
@@ -267,8 +269,8 @@ public final class PetRecallBehaviorGameTests {
                 f.service.onServerTick(f.world.getServer());
                 if (phase.get() == 0) {
                     if (!VersionCompat.areChunkEntitiesLoaded(f.world, chunk)) return;
-                    Wolf wolf = EntityType.WOLF.create(f.world, EntitySpawnReason.COMMAND);
-                    Pig pig = EntityType.PIG.create(f.world, EntitySpawnReason.COMMAND);
+                    Wolf wolf = TestEntityTypes.WOLF.create(f.world, EntitySpawnReason.COMMAND);
+                    Pig pig = TestEntityTypes.PIG.create(f.world, EntitySpawnReason.COMMAND);
                     check(context, wolf != null && pig != null, "Entities must be created");
                     wolf.snapTo(remote.getX() + 0.5D, remote.getY(), remote.getZ() + 0.5D, 0, 0);
                     pig.snapTo(remote.getX() + 1.5D, remote.getY(), remote.getZ() + 0.5D, 0, 0);
@@ -278,7 +280,7 @@ public final class PetRecallBehaviorGameTests {
                     wolf.setNoAi(true);
                     wolf.setPersistenceRequired();
                     wolf.setHealth(7.0F);
-                    f.player.setItemInHand(InteractionHand.MAIN_HAND, new ItemStack(Items.BLUE_DYE));
+                    f.player.setItemInHand(InteractionHand.MAIN_HAND, new ItemStack(BuiltInRegistries.ITEM.getValue(Identifier.withDefaultNamespace("blue_dye"))));
                     wolf.mobInteract(f.player, InteractionHand.MAIN_HAND);
                     context.assertValueEqual(DyeColor.BLUE, wolf.getCollarColor(), Component.literal("Fixture collar must be blue"));
                     wolf.setCustomName(Component.literal("Round-trip wolf"));
@@ -424,7 +426,7 @@ public final class PetRecallBehaviorGameTests {
         }
 
         Wolf wolf(BlockPos pos) {
-            Wolf wolf = context.spawnWithNoFreeWill(EntityType.WOLF, pos);
+            Wolf wolf = context.spawnWithNoFreeWill(TestEntityTypes.WOLF, pos);
             wolf.setTame(true, true);
             wolf.setOwner(player);
             wolf.setOrderedToSit(false);

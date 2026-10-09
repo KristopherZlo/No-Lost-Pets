@@ -1,5 +1,6 @@
 package com.creas.petrecall.gametest;
 
+import com.creas.petrecall.selftest.TestEntityTypes;
 import com.creas.petrecall.PetRecallMod;
 import com.creas.petrecall.index.PetIndexState;
 import com.creas.petrecall.index.PetRecord;
@@ -40,7 +41,7 @@ public final class PetRecallGameTests {
         buildPlatform(context);
 
         ServerPlayer player = createGroundedPlayer(context, PLAYER_POS);
-        Wolf wolf = context.spawnWithNoFreeWill(EntityType.WOLF, PET_POS);
+        Wolf wolf = context.spawnWithNoFreeWill(TestEntityTypes.WOLF, PET_POS);
         wolf.setTame(true, true);
         wolf.setOwner(player);
         wolf.setOrderedToSit(false);
@@ -186,7 +187,7 @@ public final class PetRecallGameTests {
         buildPlatform(context);
 
         ServerPlayer player = createGroundedPlayer(context, PLAYER_POS);
-        Wolf wolf = context.spawnWithNoFreeWill(EntityType.WOLF, PET_POS);
+        Wolf wolf = context.spawnWithNoFreeWill(TestEntityTypes.WOLF, PET_POS);
         wolf.setTame(true, true);
         wolf.setOwner(player);
         wolf.setOrderedToSit(true);
@@ -224,7 +225,7 @@ public final class PetRecallGameTests {
         ServerPlayer player = createGroundedPlayer(context, PLAYER_POS.above(2));
         player.setOnGround(false);
 
-        Wolf wolf = context.spawnWithNoFreeWill(EntityType.WOLF, PET_POS);
+        Wolf wolf = context.spawnWithNoFreeWill(TestEntityTypes.WOLF, PET_POS);
         wolf.setTame(true, true);
         wolf.setOwner(player);
         wolf.setOrderedToSit(false);
@@ -272,7 +273,7 @@ public final class PetRecallGameTests {
             }
         }
 
-        Wolf wolf = context.spawnWithNoFreeWill(EntityType.WOLF, PET_POS);
+        Wolf wolf = context.spawnWithNoFreeWill(TestEntityTypes.WOLF, PET_POS);
         wolf.setTame(true, true);
         wolf.setOwner(player);
         wolf.setOrderedToSit(false);
@@ -329,7 +330,7 @@ public final class PetRecallGameTests {
             }
         }
 
-        Wolf wolf = context.spawnWithNoFreeWill(EntityType.WOLF, PET_POS);
+        Wolf wolf = context.spawnWithNoFreeWill(TestEntityTypes.WOLF, PET_POS);
         wolf.setTame(true, true);
         wolf.setOwner(player);
         wolf.setOrderedToSit(false);
@@ -365,7 +366,7 @@ public final class PetRecallGameTests {
 
         ServerPlayer owner = createGroundedPlayer(context, PLAYER_POS);
         ServerPlayer otherPlayer = createGroundedPlayer(context, PLAYER_POS.offset(2, 0, 0));
-        Wolf wolf = context.spawnWithNoFreeWill(EntityType.WOLF, PET_POS);
+        Wolf wolf = context.spawnWithNoFreeWill(TestEntityTypes.WOLF, PET_POS);
         wolf.setTame(true, true);
         wolf.setOwner(owner);
         wolf.setOrderedToSit(false);

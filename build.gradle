@@ -28,6 +28,13 @@ base {
     archivesName = project.archives_base_name
 }
 
+def minecraftTarget = project.minecraft_version.toString()
+if (!(minecraftTarget in ['26.1', '26.1.1', '26.1.2', '26.2', '26.3'])) {
+    throw new GradleException("Unsupported Minecraft target: ${minecraftTarget}")
+}
+sourceSets.main.java.srcDir("src/compat/entities-${minecraftTarget.startsWith('26.1') ? '26.1' : '26.2'}/java")
+sourceSets.main.java.srcDir("src/compat/lan-${minecraftTarget.startsWith('26.1') ? '26.1' : minecraftTarget}/java")
+
 repositories {
     maven {
         name = "Fabric"
