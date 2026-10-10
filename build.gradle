@@ -73,11 +73,40 @@ fabricApi {
 }
 
 // Test configuration creates its run after the other Loom runs.
+// Registration and report validation use the same suite manifest.
+def gameTestSuitesFile = file("scripts/test-suites.json")
+def gameTestSuites = new groovy.json.JsonSlurper().parse(gameTestSuitesFile)
+def gameTestSuite = (findProperty("pet_test_suite") ?: "fast").toString().toLowerCase(Locale.ROOT)
+if (!gameTestSuites.containsKey(gameTestSuite)) {
+    throw new GradleException("Unknown test suite '${gameTestSuite}'; choose fast, regression, stress or full.")
+}
+def gameTestEntrypoints = gameTestSuites[gameTestSuite].join('",\n      "')
+
+// Each native environment is a separate batch, so shared runtime state is isolated.
+def gameTestEnvironmentDir = layout.buildDirectory.dir("generated/gametest-environments")
+sourceSets.gametest.resources.srcDir(gameTestEnvironmentDir)
+tasks.register("generateGameTestEnvironments") {
+    inputs.files(fileTree("src/gametest/java") { include "**/*.java" })
+    outputs.dir(gameTestEnvironmentDir)
+    doLast {
+        def environments = new HashSet<String>()
+        fileTree("src/gametest/java").matching { include "**/*.java" }.each { source ->
+            (source.getText("UTF-8") =~ /environment\s*=\s*"pet_recall_gametest:isolated\/([a-z0-9_]+)"/).each { match ->
+                def id = match[1]
+                if (!environments.add(id)) throw new GradleException("Shared GameTest environment: ${id}")
+                def resource = new File(gameTestEnvironmentDir.get().asFile, "data/pet_recall_gametest/test_environment/isolated/${id}.json")
+                resource.parentFile.mkdirs()
+                resource.setText('{"type":"minecraft:all_of","definitions":[]}\n', "UTF-8")
+            }
+        }
+    }
+}
+
 loom.runs.configureEach {
-    runDir = loomRunDir ?: "run/${project.minecraft_version}/${name}"
+    runDir = loomRunDir ?: (name == "gameTest" ? "build/run/gameTest/${project.minecraft_version}/${gameTestSuite}" : "run/${project.minecraft_version}/${name}")
 }
 loom.runs.named("gameTest") {
-    vmArg "-Dfabric-api.gametest.report-file=${layout.buildDirectory.file("gametest-results/${project.minecraft_version}.xml").get().asFile}"
+    vmArg "-Dfabric-api.gametest.report-file=${layout.buildDirectory.file("gametest-results/${project.minecraft_version}-${gameTestSuite}.xml").get().asFile}"
 }
 tasks.named("runGameTest") {
     doFirst { layout.buildDirectory.dir("gametest-results").get().asFile.mkdirs() }
@@ -152,10 +181,14 @@ tasks.register("stageArtifacts", Copy) {
 }
 
 tasks.named("processGametestResources") {
+    dependsOn tasks.named("generateGameTestEnvironments")
+    inputs.property "pet_test_suite", gameTestSuite
+    inputs.file gameTestSuitesFile
     inputs.property "minecraft_version", project.minecraft_version
     inputs.property "loader_version", project.loader_version
     filesMatching("fabric.mod.json") {
         expand "minecraft_version": project.minecraft_version,
-                "loader_version": project.loader_version
+                "loader_version": project.loader_version,
+                "gametest_entrypoints": gameTestEntrypoints
     }
 }

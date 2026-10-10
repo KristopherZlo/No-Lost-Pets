@@ -42,50 +42,51 @@ import net.minecraft.world.level.Level;
 public final class PetRecallRuntimeGameTests {
     private static final AtomicInteger SEQUENCE = new AtomicInteger();
     private enum Case {
-        BEFORE_UNLOAD, LATE_GROUP, LOGOUT_LOADING, LOGOUT_BETWEEN, DEATH_LOADING, DEATH_BETWEEN,
+        NORMAL, BEFORE_UNLOAD, LATE_GROUP, LOGOUT_LOADING, LOGOUT_BETWEEN, DEATH_LOADING, DEATH_BETWEEN,
         PORTAL_LOADING, PORTAL_BETWEEN, BLOCKED_DESTINATION, TIMEOUT, ACQUIRE_FAILURE,
         CUSTOM_DIMENSION, MOVING_DESTINATION, MULTIPLAYER, MANUAL_CONCURRENT, LIVE_AI, MIXED_SPECIES, TERRAIN, STRESS
     }
 
-    @GameTest(maxTicks = 1600, structure = "pet_recall_gametest:empty_32")
+    @GameTest(maxTicks = 1600, structure = "pet_recall_gametest:empty_32", environment = "pet_recall_gametest:isolated/movement_before_source_unload_still_recalls_without_another_trigger")
     public void movementBeforeSourceUnloadStillRecallsWithoutAnotherTrigger(GameTestHelper c) { run(c, Case.BEFORE_UNLOAD); }
-    @GameTest(maxTicks = 1600, structure = "pet_recall_gametest:empty_32")
+    @GameTest(maxTicks = 1600, structure = "pet_recall_gametest:empty_32", environment = "pet_recall_gametest:isolated/pets_unloading_after_the_first_batch_join_the_same_recall_burst")
     public void petsUnloadingAfterTheFirstBatchJoinTheSameRecallBurst(GameTestHelper c) { run(c, Case.LATE_GROUP); }
-    @GameTest(maxTicks = 1600, structure = "pet_recall_gametest:empty_32")
+    @GameTest(maxTicks = 1600, structure = "pet_recall_gametest:empty_32", environment = "pet_recall_gametest:isolated/logout_while_chunk_loads_then_rejoin_recovers_every_pet")
     public void logoutWhileChunkLoadsThenRejoinRecoversEveryPet(GameTestHelper c) { run(c, Case.LOGOUT_LOADING); }
-    @GameTest(maxTicks = 1600, structure = "pet_recall_gametest:empty_32")
+    @GameTest(maxTicks = 1600, structure = "pet_recall_gametest:empty_32", environment = "pet_recall_gametest:isolated/logout_between_batches_then_rejoin_recovers_every_pet")
     public void logoutBetweenBatchesThenRejoinRecoversEveryPet(GameTestHelper c) { run(c, Case.LOGOUT_BETWEEN); }
-    @GameTest(maxTicks = 1600, structure = "pet_recall_gametest:empty_32")
+    @GameTest(maxTicks = 1600, structure = "pet_recall_gametest:empty_32", environment = "pet_recall_gametest:isolated/death_while_chunk_loads_then_respawn_recovers_every_pet")
     public void deathWhileChunkLoadsThenRespawnRecoversEveryPet(GameTestHelper c) { run(c, Case.DEATH_LOADING); }
-    @GameTest(maxTicks = 1600, structure = "pet_recall_gametest:empty_32")
+    @GameTest(maxTicks = 1600, structure = "pet_recall_gametest:empty_32", environment = "pet_recall_gametest:isolated/death_between_batches_then_respawn_recovers_every_pet")
     public void deathBetweenBatchesThenRespawnRecoversEveryPet(GameTestHelper c) { run(c, Case.DEATH_BETWEEN); }
-    @GameTest(maxTicks = 1600, structure = "pet_recall_gametest:empty_32")
+    @GameTest(maxTicks = 1600, structure = "pet_recall_gametest:empty_32", environment = "pet_recall_gametest:isolated/portal_while_chunk_loads_never_transfers_pets_across_dimensions")
     public void portalWhileChunkLoadsNeverTransfersPetsAcrossDimensions(GameTestHelper c) { run(c, Case.PORTAL_LOADING); }
-    @GameTest(maxTicks = 1600, structure = "pet_recall_gametest:empty_32")
+    @GameTest(maxTicks = 1600, structure = "pet_recall_gametest:empty_32", environment = "pet_recall_gametest:isolated/portal_between_batches_preserves_the_remaining_queue")
     public void portalBetweenBatchesPreservesTheRemainingQueue(GameTestHelper c) { run(c, Case.PORTAL_BETWEEN); }
-    @GameTest(maxTicks = 1600, structure = "pet_recall_gametest:empty_32")
+    @GameTest(maxTicks = 1600, structure = "pet_recall_gametest:empty_32", environment = "pet_recall_gametest:isolated/temporarily_blocked_destination_retries_the_same_pets_without_movement")
     public void temporarilyBlockedDestinationRetriesTheSamePetsWithoutMovement(GameTestHelper c) { run(c, Case.BLOCKED_DESTINATION); }
-    @GameTest(maxTicks = 1800, structure = "pet_recall_gametest:empty_32")
+    @GameTest(maxTicks = 1800, structure = "pet_recall_gametest:empty_32", environment = "pet_recall_gametest:isolated/chunk_timeout_preserves_and_automatically_retries_the_same_living_pets")
     public void chunkTimeoutPreservesAndAutomaticallyRetriesTheSameLivingPets(GameTestHelper c) { run(c, Case.TIMEOUT); }
-    @GameTest(maxTicks = 1600, structure = "pet_recall_gametest:empty_32")
+    @GameTest(maxTicks = 1600, structure = "pet_recall_gametest:empty_32", environment = "pet_recall_gametest:isolated/transient_acquisition_failure_does_not_strand_the_affected_pets")
     public void transientAcquisitionFailureDoesNotStrandTheAffectedPets(GameTestHelper c) { run(c, Case.ACQUIRE_FAILURE); }
-    @GameTest(maxTicks = 1600, structure = "pet_recall_gametest:empty_32")
+    @GameTest(maxTicks = 1600, structure = "pet_recall_gametest:empty_32", environment = "pet_recall_gametest:isolated/owner_moving_during_loading_uses_the_current_destination")
     public void ownerMovingDuringLoadingUsesTheCurrentDestination(GameTestHelper c) { run(c, Case.MOVING_DESTINATION); }
-    @GameTest(maxTicks = 1800, structure = "pet_recall_gametest:empty_32")
+    @GameTest(maxTicks = 1800, structure = "pet_recall_gametest:empty_32", environment = "pet_recall_gametest:isolated/two_owners_and_concurrent_manual_recall_share_the_production_scheduler")
     public void twoOwnersAndConcurrentManualRecallShareTheProductionScheduler(GameTestHelper c) { run(c, Case.MULTIPLAYER); }
-    @GameTest(maxTicks = 1800, structure = "pet_recall_gametest:empty_32")
+    @GameTest(maxTicks = 1800, structure = "pet_recall_gametest:empty_32", environment = "pet_recall_gametest:isolated/automatic_and_manual_owners_load_shared_chunks_concurrently")
     public void automaticAndManualOwnersLoadSharedChunksConcurrently(GameTestHelper c) { run(c, Case.MANUAL_CONCURRENT); }
-    @GameTest(maxTicks = 1800, structure = "pet_recall_gametest:empty_32")
+    @GameTest(maxTicks = 1800, structure = "pet_recall_gametest:empty_32", environment = "pet_recall_gametest:isolated/recalled_pets_with_live_ai_and_gravity_remain_alive_and_follow_their_owner")
     public void recalledPetsWithLiveAiAndGravityRemainAliveAndFollowTheirOwner(GameTestHelper c) { run(c, Case.LIVE_AI); }
-    @GameTest(maxTicks = 1800, structure = "pet_recall_gametest:empty_32")
+    @GameTest(maxTicks = 1800, structure = "pet_recall_gametest:empty_32", environment = "pet_recall_gametest:isolated/mixed_cats_wolves_parrots_and_babies_keep_their_state")
     public void mixedCatsWolvesParrotsAndBabiesKeepTheirState(GameTestHelper c) { run(c, Case.MIXED_SPECIES); }
-    @GameTest(maxTicks = 1800, structure = "pet_recall_gametest:empty_32")
+    @GameTest(maxTicks = 1800, structure = "pet_recall_gametest:empty_32", environment = "pet_recall_gametest:isolated/gravity_and_irregular_terrain_cannot_drop_pets_into_hazards")
     public void gravityAndIrregularTerrainCannotDropPetsIntoHazards(GameTestHelper c) { run(c, Case.TERRAIN); }
-    @GameTest(maxTicks = 5000, structure = "pet_recall_gametest:empty_32")
-    public void repeatedRecallOfTwoHundredFiftySixPetsReleasesSourceChunks(GameTestHelper c) { run(c, Case.STRESS); }
 
-    @GameTest(maxTicks = 1800, structure = "pet_recall_gametest:empty_32")
+    @GameTest(maxTicks = 1800, structure = "pet_recall_gametest:empty_32", environment = "pet_recall_gametest:isolated/real_datapack_dimension_supports_recall_and_source_reload")
     public void realDatapackDimensionSupportsRecallAndSourceReload(GameTestHelper c) { run(c, Case.CUSTOM_DIMENSION); }
+
+    static void runNormal(GameTestHelper c) { run(c, Case.NORMAL); }
+    static void runStress(GameTestHelper c) { run(c, Case.STRESS); }
 
     private static void run(GameTestHelper c, Case scenario) {
         Fixture fixture = new Fixture(c, scenario);
@@ -110,6 +111,7 @@ public final class PetRecallRuntimeGameTests {
         final List<UUID> recalled = new ArrayList<>();
         final List<UUID> controls = new ArrayList<>();
         final Map<UUID, PetRecord> before = new HashMap<>();
+        final Map<UUID, Integer> petNumbers = new HashMap<>();
         final List<EmbeddedChannel> channels = new ArrayList<>();
         ServerPlayer player;
         ServerPlayer other;
@@ -136,6 +138,8 @@ public final class PetRecallRuntimeGameTests {
             other = context.makeMockServerPlayerInLevel();
             auto.suppressPlayer(player.getUUID());
             auto.suppressPlayer(other.getUUID());
+            RecallBatchProbe.begin(player.getUUID());
+            RecallBatchProbe.begin(other.getUUID());
             if (scenario == Case.CUSTOM_DIMENSION) {
                 var target = new TeleportTransition(world, new Vec3(destination.getX() + 0.5D, destination.getY(), destination.getZ() + 0.5D), Vec3.ZERO, 0, 0, TeleportTransition.DO_NOTHING);
                 player.teleport(target);
@@ -199,6 +203,7 @@ public final class PetRecallRuntimeGameTests {
             check(context, world.addFreshEntity(pet), "Real fixture pet must spawn");
             tracker.observe(pet, world);
             before.put(pet.getUUID(), PetIndexState.get(world.getServer()).getPet(pet.getUUID()));
+            petNumbers.put(pet.getUUID(), i);
             return pet;
         }
 
@@ -224,9 +229,16 @@ public final class PetRecallRuntimeGameTests {
         void tick() {
             try {
                 ticks++;
+                int deadline = switch (scenario) {
+                    case STRESS -> 4980;
+                    case TIMEOUT, MULTIPLAYER, MANUAL_CONCURRENT, LIVE_AI, MIXED_SPECIES, TERRAIN, CUSTOM_DIMENSION -> 1780;
+                    default -> 1580;
+                };
+                check(context, ticks < deadline,
+                        "Fixture deadline reached: " + progress());
                 if (phase == 0) {
                     if (!sourcesReady()) return;
-                    int count = scenario == Case.STRESS ? 256 : 40;
+                    int count = scenario == Case.STRESS ? 256 : scenario == Case.NORMAL ? 33 : 40;
                     for (int i = 0; i < count; i++) recalled.add(spawn(i,
                             (scenario == Case.MULTIPLAYER || scenario == Case.MANUAL_CONCURRENT) && i % 2 == 1 ? other : player, false).getUUID());
                     for (int i = 0; i < 5; i++) controls.add(spawn(count + i, player, true).getUUID());
@@ -291,6 +303,8 @@ public final class PetRecallRuntimeGameTests {
                     return;
                 }
                 elapsed++;
+                assertIndex();
+                assertLoadedState();
                 check(context, service.getDebugStats(world.getGameTime()).activeChunkOperations() <= 4,
                         "All production owners together must respect the four-chunk concurrency limit");
                 int near = nearCount();
@@ -348,9 +362,11 @@ public final class PetRecallRuntimeGameTests {
                     }
                 }
                 check(context, elapsed < (scenario == Case.STRESS ? 450 : 700),
-                        "Every eligible pet must eventually arrive without another jump, movement or command");
+                        "Every eligible pet must eventually arrive without another jump, movement or command: " + progress());
                 if (nearCount() != recalled.size() || service.isRecallActive(player.getUUID()) || service.isRecallActive(other.getUUID())) return;
                 if (scenario == Case.LIVE_AI || scenario == Case.MIXED_SPECIES || scenario == Case.TERRAIN) {
+                    // Keep live parrots as world entities; shoulder mounting has its own vanilla lifecycle.
+                    if (scenario == Case.MIXED_SPECIES) player.getAbilities().flying = true;
                     if (settled == 0) for (UUID id : recalled) {
                         TamableAnimal pet = (TamableAnimal) world.getEntity(id);
                         pet.setNoGravity(false);
@@ -358,8 +374,8 @@ public final class PetRecallRuntimeGameTests {
                     }
                     if (scenario == Case.LIVE_AI && settled == 20) placeOwner(player, destination.offset(8, 0, 0));
                 }
-                if (++settled < 100) return;
-                if (scenario != Case.STRESS && scenario != Case.LIVE_AI && scenario != Case.MIXED_SPECIES && scenario != Case.TERRAIN
+                if ((scenario == Case.LIVE_AI || scenario == Case.MIXED_SPECIES || scenario == Case.TERRAIN) && ++settled < 100) return;
+                if (scenario != Case.NORMAL && scenario != Case.STRESS && scenario != Case.LIVE_AI && scenario != Case.MIXED_SPECIES && scenario != Case.TERRAIN
                         && scenario != Case.CUSTOM_DIMENSION && scenario != Case.MULTIPLAYER && scenario != Case.MANUAL_CONCURRENT && scenario != Case.BEFORE_UNLOAD) {
                     check(context, interrupted, "The test must actually exercise its interruption or failure");
                 }
@@ -427,12 +443,17 @@ public final class PetRecallRuntimeGameTests {
         }
 
         void assertIndex() {
-            for (UUID id : recalled) check(context, PetIndexState.get(world.getServer()).getPet(id) != null,
+            for (UUID id : before.keySet()) check(context, PetIndexState.get(world.getServer()).getPet(id) != null,
                     "Transient failures and owner lifecycle events cannot erase a living pet's index entry");
         }
 
         void verify() {
             assertIndex();
+            assertLoadedState();
+            if (scenario == Case.NORMAL) {
+                check(context, RecallBatchProbe.batches(player.getUUID()).equals(List.of(16, 16, 1)),
+                        "Thirty-three pets must use exactly three production batches: " + progress());
+            }
             for (UUID id : recalled) {
                 Entity entity = world.getEntity(id);
                 check(context, entity instanceof TamableAnimal, "Every original pet must survive source reload");
@@ -440,8 +461,8 @@ public final class PetRecallRuntimeGameTests {
                 PetRecord saved = before.get(id);
                 check(context, pet.isAlive() && pet.getHealth() == saved.health(), "Pet cannot lose health after teleport or falling");
                 check(context, pet.getOwnerReference().getUUID().equals(saved.ownerUuid()) && !pet.isOrderedToSit(), "Ownership and stance must survive");
-                check(context, pet.getCustomName() != null && pet.getCustomName().getString().startsWith("runtime pet ")
-                        && pet.entityTags().stream().anyMatch(tag -> tag.startsWith("runtime_state_")), "Name and custom tags must survive");
+                check(context, pet.getCustomName() != null && pet.getCustomName().getString().equals("runtime pet " + petNumbers.get(id))
+                        && pet.entityTags().contains("runtime_state_" + petNumbers.get(id)), "Name and custom tags must survive");
                 ServerPlayer owner = saved.ownerUuid().equals(player.getUUID()) ? player : other;
                 check(context, pet.distanceToSqr(owner) <= 144.0D && world.noCollision(pet, pet.getBoundingBox()),
                         "Pet must remain near the current owner, outside solid blocks");
@@ -463,10 +484,38 @@ public final class PetRecallRuntimeGameTests {
             }
         }
 
+        // Structural checks fail immediately; asynchronous I/O retains its original deadlines.
+        void assertLoadedState() {
+            for (var entry : before.entrySet()) {
+                UUID id = entry.getKey();
+                Entity entity = world.getEntity(id);
+                if (entity == null) continue;
+                check(context, entity instanceof TamableAnimal, "Loaded fixture UUID changed type: " + id);
+                var pet = (TamableAnimal) entity;
+                PetRecord saved = entry.getValue();
+                check(context, pet.isAlive() && pet.getHealth() == saved.health(), "Living pet lost health: " + id);
+                check(context, pet.getOwnerReference() != null && pet.getOwnerReference().getUUID().equals(saved.ownerUuid()), "Pet owner changed: " + id);
+                check(context, pet.isOrderedToSit() == saved.sitting(), "Pet sitting state changed: " + id);
+                if (settled == 0 || controls.contains(id) || scenario != Case.LIVE_AI && scenario != Case.MIXED_SPECIES && scenario != Case.TERRAIN) {
+                    check(context, pet.isNoAi() && pet.isNoGravity(), "Recall changed fixture AI or gravity: " + id);
+                }
+                check(context, pet.getCustomName() != null && pet.getCustomName().getString().equals("runtime pet " + petNumbers.get(id))
+                        && pet.entityTags().contains("runtime_state_" + petNumbers.get(id)), "Pet name or tags changed: " + id);
+            }
+        }
+
+        String progress() {
+            return "scenario=" + scenario + ", phase=" + phase + ", tick=" + ticks + ", arrived=" + nearCount()
+                    + "/" + recalled.size() + ", batchSizes=" + RecallBatchProbe.batches(player.getUUID())
+                    + ", scheduler=" + service.getDebugStats(world.getGameTime());
+        }
+
         void clearFaults() { for (ChunkPos chunk : sources) RecallFaults.clear(world, chunk); }
 
         void cleanup() {
             clearFaults();
+            RecallBatchProbe.clear(player.getUUID());
+            RecallBatchProbe.clear(other.getUUID());
             auto.suppressPlayer(player.getUUID());
             auto.suppressPlayer(other.getUUID());
             forceSources(false);

@@ -1,7 +1,6 @@
 package com.creas.petrecall.recall;
 
 import static org.junit.jupiter.api.Assertions.*;
-
 import java.util.ArrayList;
 import java.util.List;
 import org.junit.jupiter.api.Test;
@@ -240,6 +239,74 @@ class ChunkRecallSchedulerTest {
     void rejectsUnboundedOrNonExpiringQueueConfiguration() {
         assertThrows(IllegalArgumentException.class, () -> queue(0, 1));
         assertThrows(IllegalArgumentException.class, () -> queue(1, 0));
+    }
+
+    @Test
+    void productionTimeoutBoundaryAndLateReadinessCompleteOnlyOnce() {
+        var queue = queue(4, 200);
+        Probe hung = new Probe(), onDeadline = new Probe(), waiting = new Probe();
+        queue.enqueue("a", hung);
+        queue.enqueue("b", onDeadline);
+        queue.enqueue("a", waiting);
+        queue.tick();
+        for (int tick = 1; tick < 200; tick++) queue.tick();
+        assertTrue(hung.completions.isEmpty(), "The real 200-tick budget cannot expire early");
+        assertTrue(onDeadline.completions.isEmpty());
+        assertEquals(0, waiting.acquired, "Shared chunks must stay serialized throughout the wait");
+        onDeadline.ready = true;
+        queue.tick();
+        assertEquals(List.of(Result.TIMED_OUT), hung.results());
+        assertEquals(List.of(Result.READY), onDeadline.results(), "Readiness at the deadline must win");
+        assertEquals(1, waiting.acquired);
+        hung.ready = waiting.ready = true;
+        for (int tick = 0; tick < 200; tick++) queue.tick();
+        for (Probe probe : List.of(hung, onDeadline, waiting)) {
+            assertEquals(1, probe.acquired);
+            assertEquals(1, probe.released);
+            assertEquals(1, probe.completions.size(), "Late readiness cannot repeat a callback");
+        }
+        assertEquals(List.of(Result.READY), waiting.results());
+        assertEquals(0, queue.getQueuedTaskCount());
+        assertEquals(0, queue.getActiveKeyCount());
+        assertTrue(callbackErrors.isEmpty());
+    }
+
+    @Test
+    void boundarySizedAndLargeQueuesDrainWithoutLeaksOrStarvingSharedChunks() {
+        for (int size : new int[] {15, 16, 17, 32, 33, 40, 256}) {
+            var queue = queue(4, 200);
+            var probes = new ArrayList<Probe>();
+            for (int i = 0; i < size; i++) {
+                Probe probe = new Probe();
+                probes.add(probe);
+                queue.enqueue("chunk-" + i % 5, probe);
+            }
+            int tick = 0;
+            do {
+                for (int i = 0; i < probes.size(); i++) {
+                    Probe probe = probes.get(i);
+                    if (probe.acquired == 1 && tick % (2 + i % 4) == 0) probe.ready = true;
+                }
+                queue.tick();
+                assertTrue(queue.getActiveKeyCount() <= 4, "Global capacity exceeded for size " + size);
+                for (int chunk = 0; chunk < 5; chunk++) {
+                    int active = 0;
+                    for (int i = chunk; i < probes.size(); i += 5) {
+                        Probe probe = probes.get(i);
+                        if (probe.acquired > probe.released) active++;
+                        assertTrue(probe.acquired <= 1 && probe.released <= 1);
+                    }
+                    assertTrue(active <= 1, "Two operations held the same chunk for size " + size);
+                }
+                assertTrue(++tick <= size * 6, "A queued chunk was starved for size " + size);
+            } while (queue.getQueuedTaskCount() > 0 || queue.getActiveKeyCount() > 0);
+            for (Probe probe : probes) {
+                assertEquals(1, probe.acquired);
+                assertEquals(1, probe.released);
+                assertEquals(List.of(Result.READY), probe.results(), "Lost or repeated callback for size " + size);
+            }
+        }
+        assertTrue(callbackErrors.isEmpty());
     }
 
     private static final class Probe implements ChunkRecallScheduler.Operation {

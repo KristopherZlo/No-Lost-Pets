@@ -29,6 +29,7 @@ $lock = [Collections.Generic.List[object]]::new()
 Add-Type -AssemblyName System.IO.Compression.FileSystem
 
 function Install-Version([string]$Id) {
+    if ($Id -notmatch '^[a-zA-Z0-9]{8}$') { throw "Invalid Modrinth version ID: $Id" }
     $data = Invoke-RestMethod "https://api.modrinth.com/v2/version/$Id" -Headers $headers
     if ($data.loaders -notcontains 'fabric' -or $data.game_versions -notcontains $Version) {
         throw "Dependency $Id is not a Fabric release for Minecraft $Version."
@@ -60,8 +61,9 @@ function Install-Version([string]$Id) {
             $uri.Scheme -ne 'https' -or $uri.Host -ne 'cdn.modrinth.com' -or -not $artifact.hashes.sha512) {
         throw "Unexpected Modrinth artifact for $Id."
     }
-    $destination = Join-Path $mods $filename
-    if (Test-Path -LiteralPath $destination) { throw "Duplicate artifact filename: $filename" }
+    $localFilename = "$Id.jar"
+    $destination = Join-Path $mods $localFilename
+    if (Test-Path -LiteralPath $destination) { throw "Duplicate artifact filename: $localFilename" }
     Invoke-WebRequest $uri.AbsoluteUri -Headers $headers -OutFile $destination
     if ((Get-FileHash -LiteralPath $destination -Algorithm SHA512).Hash -ine $artifact.hashes.sha512) {
         throw "Checksum mismatch for $filename."
@@ -75,7 +77,7 @@ function Install-Version([string]$Id) {
         $modIds.Add($metadata.id)
     } finally { $zip.Dispose() }
     $lock.Add([pscustomobject]@{projectId=$data.project_id; versionId=$Id; version=$data.version_number;
-        file=$filename; sha512=$artifact.hashes.sha512; url=$artifact.url; modId=$metadata.id})
+        file=$localFilename; originalFile=$filename; sha512=$artifact.hashes.sha512; url=$artifact.url; modId=$metadata.id})
 }
 
 Install-Version $versionId
@@ -122,7 +124,7 @@ try {
         throw 'A fresh compatibility test report is required; process exit zero alone is not sufficient.'
     }
     [xml]$xml = Get-Content -LiteralPath $report -Raw
-    $cases = @($xml.SelectNodes("//testcase[contains(@name,'popularpetcompatibilitygametests') or contains(@classname,'PopularPetCompatibilityGameTests')]"))
+    $cases = @($xml.SelectNodes("//testcase[@name='pet_recall_compat_test:popular_pet_compatibility_game_tests_installed_companions_keep_ownership_inventory_and_custom_state_across_disk_loads']"))
     if ($cases.Count -ne 1 -or $cases[0].SelectSingleNode('failure|error|skipped')) {
         throw "The real-mod contract must actually execute and pass without skips. Report: $report"
     }

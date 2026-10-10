@@ -1,7 +1,7 @@
 {
   "required": true,
-  "package": "com.creas.petrecall.gametest",
+  "package": "com.creas.petrecall.gametest.mixin",
   "compatibilityLevel": "JAVA_25",
-  "mixins": ["RecallFaultMixin"],
+  "mixins": ["RecallFaultMixin", "RecallBatchMixin"],
   "injectors": {"defaultRequire": 1}
 }
