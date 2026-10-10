@@ -81,6 +81,13 @@ function Install-Version([string]$Id) {
 }
 
 Install-Version $versionId
+# Some releases omit required libraries from Modrinth metadata; pin those in the catalog.
+if ($profile.requiredVersions) {
+    $requiredForTarget = $profile.requiredVersions.PSObject.Properties[$Version]
+    if ($requiredForTarget) {
+        foreach ($requiredVersion in @($requiredForTarget.Value)) { Install-Version $requiredVersion }
+    }
+}
 $utf8 = [Text.UTF8Encoding]::new($false)
 $specFile = Join-Path $run 'fixture.json'
 $spec = [pscustomobject]@{slug=$profile.slug; minecraft=$Version; requiredMods=@($modIds);
@@ -108,6 +115,13 @@ if ($native) {
     $target = $targets[$Version]
     $targetArgs = @("-Pminecraft_version=$Version", "-Pyarn_mappings=$($target.yarn)", "-Pfabric_version=$($target.api)")
 }
+if ($profile.fabricLoader) { $targetArgs = @($targetArgs | Where-Object { $_ -notlike '-Ploader_version=*' }) + "-Ploader_version=$($profile.fabricLoader)" }
+if ($profile.javaVersions) {
+    $requiredJava = $profile.javaVersions.PSObject.Properties[$Version].Value
+    if ($requiredJava -and (Get-Item -LiteralPath (Join-Path $JavaHome 'bin/java.exe')).VersionInfo.ProductMajorPart -lt $requiredJava) {
+        throw "$Project on Minecraft $Version requires JDK $requiredJava; pass the matching -JavaHome."
+    }
+}
 if (-not $GradleUserHome) { $GradleUserHome = if ($native) { Join-Path $projectRoot '../pet-recall/.gradle-user-home' } else { Join-Path $projectRoot '.gradle-user-home' } }
 $previousJava = $env:JAVA_HOME
 $previousPath = $env:Path
@@ -116,8 +130,12 @@ try {
     $env:JAVA_HOME = $JavaHome
     $env:Path = "$JavaHome/bin;$previousPath"
     $started = [DateTime]::UtcNow
-    & './gradlew.bat' runGameTest @targetArgs "-Ppet_compat_mods=$mods" "-Ppet_compat_spec=$specFile" `
-        "-Ploom_run_dir=$run/server" --no-daemon --console=plain -g $GradleUserHome
+    $gradleErrorAction = $ErrorActionPreference
+    try {
+        $ErrorActionPreference = 'Continue'
+        & './gradlew.bat' runGameTest @targetArgs "-Ppet_compat_mods=$mods" "-Ppet_compat_spec=$specFile" `
+            "-Ploom_run_dir=build/compatibility/$Version/$Project-$RunId/server" --no-daemon --console=plain -g $GradleUserHome
+    } finally { $ErrorActionPreference = $gradleErrorAction }
     if ($LASTEXITCODE -ne 0) { throw "Compatibility tests failed ($LASTEXITCODE). Profile: $run" }
     $report = Join-Path $run 'gametest-results.xml'
     if (-not (Test-Path -LiteralPath $report) -or (Get-Item -LiteralPath $report).LastWriteTimeUtc -lt $started) {

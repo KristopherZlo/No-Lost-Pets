@@ -26,6 +26,9 @@
       "versions": {
         "1.21.10": "xiOU9UEU"
       },
+      "requiredVersions": {
+        "1.21.10": ["IKHTwwTv"]
+      },
       "entities": [
         "doggytalents:dog"
       ],
@@ -56,6 +59,7 @@
     },
     {
       "slug": "indypets",
+      "fabricLoader": "0.19.5",
       "projectId": "SVJhmJvx",
       "downloads": 103436,
       "url": "https://modrinth.com/mod/indypets",
@@ -80,6 +84,7 @@
     },
     {
       "slug": "better-wolf-companion-mod",
+      "javaVersions": {"1.21.11": 25},
       "projectId": "hn5J0YBk",
       "downloads": 34581,
       "url": "https://modrinth.com/mod/better-wolf-companion-mod",

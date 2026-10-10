@@ -1,5 +1,5 @@
 plugins {
-    id "fabric-loom" version "1.15.1"
+    id "net.fabricmc.fabric-loom-remap" version "1.17.21"
     id "maven-publish"
 }
 
@@ -144,9 +144,22 @@ sourceSets {
 }
 
 def petCompatMods = findProperty("pet_compat_mods")
+tasks.named("processUpgradeTestResources") {
+    inputs.property "minecraft_version", project.minecraft_version
+    filesMatching("fabric.mod.json") { expand "minecraft_version": project.minecraft_version }
+}
+
 def petCompatSpec = findProperty("pet_compat_spec")
 if (petCompatMods && petCompatSpec) {
-    dependencies { modRuntimeOnly fileTree(dir: petCompatMods, include: "*.jar") }
+    def externalPetMods = fileTree(dir: petCompatMods, include: "*.jar")
+    dependencies {
+        modRuntimeOnly externalPetMods
+        // File dependencies lack Maven metadata; expose their bundled libraries to the dev run too.
+        externalPetMods.each { modJar ->
+            modRuntimeOnly files(zipTree(modJar).matching { include "META-INF/jars/*.jar" }.files)
+        }
+    }
+    sourceSets.gametest.runtimeClasspath += sourceSets.compatTest.output
     loom.mods.register("pet_recall_compat_test") { sourceSet sourceSets.compatTest }
     loom.runs.named("gameTest") {
         vmArg "-Dnolostpets.compat.spec=${file(petCompatSpec).absolutePath}"

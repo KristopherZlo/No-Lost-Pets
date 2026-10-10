@@ -5,5 +5,5 @@
   "name": "NoLostPets saved-world upgrade test",
   "environment": "server",
   "entrypoints": { "main": ["com.creas.petrecall.upgrade.PetRecallUpgradeTest"] },
-  "depends": { "fabricloader": ">=0.18.2", "fabric-api": "*", "pet_recall": "*", "minecraft": "1.21.11", "java": ">=21" }
+  "depends": { "fabricloader": ">=0.18.2", "fabric-api": "*", "pet_recall": "*", "minecraft": "${minecraft_version}", "java": ">=21" }
 }
