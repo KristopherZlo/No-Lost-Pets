@@ -17,34 +17,50 @@ import net.minecraft.server.network.ServerPlayerEntity;
 import net.minecraft.server.world.ServerWorld;
 import net.minecraft.util.math.BlockPos;
 import net.minecraft.util.math.ChunkPos;
+import net.minecraft.world.Heightmap;
 
 /** A real client sends jump/movement packets; no ground flag or player gravity is faked. */
 @SuppressWarnings("UnstableApiUsage")
 public final class PetRecallClientGameTests implements FabricClientGameTest {
     @Override
     public void runTest(ClientGameTestContext context) {
+        PetRecallMod.LOGGER.info("Starting NoLostPets client behavior tests");
         jumpAndLand(context, false);
         jumpAndLand(context, true);
+        PetRecallMod.LOGGER.info("NoLostPets client behavior tests passed: 2 scenarios, 40 pets each");
     }
 
     private static void jumpAndLand(ClientGameTestContext context, boolean interruptLoading) {
         try (TestSingleplayerContext session = context.worldBuilder().create()) {
             State state = new State();
+            session.getServer().runOnServer(server -> {
+                state.world = server.getOverworld();
+                for (int x = 960 >> 4; x <= 1000 >> 4; x++) for (int z = 960 >> 4; z <= 1000 >> 4; z++) {
+                    state.world.setChunkForced(x, z, true);
+                    state.world.getChunk(x, z);
+                }
+                state.floorY = state.world.getTopY(Heightmap.Type.MOTION_BLOCKING_NO_LEAVES, 980, 980) - 1;
+            });
             session.getServer().runCommand("gamemode survival @a");
-            session.getServer().runCommand("fill 960 63 960 1000 63 1000 minecraft:stone");
-            session.getServer().runCommand("fill 960 64 960 1000 68 1000 minecraft:air");
-            session.getServer().runCommand("tp @a 980.5 64 980.5");
-            context.waitFor(client -> client.player != null && client.player.isOnGround());
+            session.getServer().runCommand("fill 960 " + state.floorY + " 960 1000 " + state.floorY + " 1000 minecraft:stone");
+            session.getServer().runCommand("fill 960 " + (state.floorY + 1) + " 960 1000 " + (state.floorY + 5) + " 1000 minecraft:air");
+            session.getServer().runOnServer(server -> require(state.world.getBlockState(new BlockPos(980, state.floorY, 980)).isOf(Blocks.STONE),
+                    "The destination floor must exist before teleporting the real player"));
+            session.getServer().runCommand("tp @a 980.5 " + (state.floorY + 1) + " 980.5");
+            context.waitFor(client -> client.player != null && client.player.isAlive() && client.player.isOnGround());
             session.getServer().runOnServer(server -> {
                 state.world = server.getOverworld();
                 state.owner = server.getPlayerManager().getPlayerList().getFirst();
+                for (int x = 960 >> 4; x <= 1000 >> 4; x++) for (int z = 960 >> 4; z <= 1000 >> 4; z++) {
+                    state.world.setChunkForced(x, z, false);
+                }
                 PetRecallMod.getAutoRecallController().suppressPlayer(state.owner.getUuid());
                 for (int i = 0; i < 5; i++) {
                     ChunkPos chunk = new ChunkPos(15000 + i * 37, 15000 + i * 53);
                     state.chunks.add(chunk);
                     state.world.setChunkForced(chunk.x, chunk.z, true);
                     state.world.getChunk(chunk.x, chunk.z);
-                    BlockPos pad = new BlockPos(chunk.getStartX() + 8, 65 + i * 5, chunk.getStartZ() + 8);
+                    BlockPos pad = new BlockPos(chunk.getStartX() + 8, state.floorY + 2 + i * 5, chunk.getStartZ() + 8);
                     for (int x = -3; x <= 3; x++) for (int z = -3; z <= 3; z++) {
                         state.world.setBlockState(pad.add(x, -1, z), Blocks.STONE.getDefaultState());
                         for (int y = 0; y <= 2; y++) state.world.setBlockState(pad.add(x, y, z), Blocks.AIR.getDefaultState());
@@ -78,8 +94,12 @@ public final class PetRecallClientGameTests implements FabricClientGameTest {
                 await(context, session, () -> PetRecallMod.getRecallService().isRecallActive(state.owner.getUuid()), 80,
                         "Jump must interrupt an actual in-flight automatic batch");
             }
-            context.getInput().pressKey(32);
-            context.waitFor(client -> !client.player.isOnGround());
+            context.getInput().holdKey(32);
+            try {
+                context.waitFor(client -> !client.player.isOnGround());
+            } finally {
+                context.getInput().releaseKey(32);
+            }
             session.getServer().runOnServer(server -> {
                 if (!interruptLoading) PetRecallMod.getAutoRecallController().resumePlayer(state.owner.getUuid());
                 for (ChunkPos chunk : state.chunks) RecallFaults.clear(state.world, chunk);
@@ -132,6 +152,7 @@ public final class PetRecallClientGameTests implements FabricClientGameTest {
     private static final class State {
         ServerWorld world;
         ServerPlayerEntity owner;
+        int floorY;
         final List<ChunkPos> chunks = new ArrayList<>();
         final List<UUID> pets = new ArrayList<>();
         int near() {
