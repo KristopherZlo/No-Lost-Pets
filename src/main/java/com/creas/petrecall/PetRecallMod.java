@@ -47,7 +47,10 @@ public final class PetRecallMod implements ModInitializer {
         DebugTrace.startSession(MOD_ID);
         DebugTrace.log("lifecycle", "Registering NoLostPets event hooks");
         ServerEntityEvents.ENTITY_LOAD.register(TRACKER::onEntityLoad);
-        ServerEntityEvents.ENTITY_UNLOAD.register(TRACKER::onEntityUnload);
+        ServerEntityEvents.ENTITY_UNLOAD.register((entity, world) -> {
+            TRACKER.onEntityUnload(entity, world);
+            AUTO_RECALL.scheduleAfterPetUnload(world.getServer(), entity.getUuid());
+        });
         ServerTickEvents.END_SERVER_TICK.register(RECALL_SERVICE::onServerTick);
         ServerTickEvents.END_SERVER_TICK.register(AUTO_RECALL::onServerTick);
         ServerTickEvents.END_SERVER_TICK.register(SELF_TEST::onServerTick);

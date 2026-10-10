@@ -17,6 +17,7 @@ import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 import java.util.function.Consumer;
+import net.minecraft.entity.Entity;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.network.ServerPlayerEntity;
 
@@ -74,6 +75,14 @@ public final class AutoPetRecallController {
 
         PlayerAutoState state = this.playerStates.computeIfAbsent(player.getUuid(), ignored -> new PlayerAutoState());
         this.scheduleCheck(state, server.getOverworld().getTime(), "immediate event for " + player.getName().getString());
+    }
+
+    public void scheduleAfterPetUnload(MinecraftServer server, UUID petUuid) {
+        if (server.getOverworld() == null) return;
+        PetRecord record = PetIndexState.get(server).getPet(petUuid);
+        if (record == null) return;
+        ServerPlayerEntity owner = server.getPlayerManager().getPlayer(record.ownerUuid());
+        if (owner != null && this.isStillEligible(owner, record)) this.scheduleImmediate(owner);
     }
 
     public void scheduleAfterJoin(ServerPlayerEntity player) {
@@ -180,14 +189,18 @@ public final class AutoPetRecallController {
             return;
         }
 
-        if (state.pendingPets.isEmpty()) {
-            // Select the whole unloaded group before our chunk tickets load its neighbours.
-            state.pendingPets.addAll(this.collectAutoRecallCandidates(server, player, now));
+        if (state.pendingPets.isEmpty() || pendingCheck) {
+            // Merge newly unloaded pets without losing selections that already loaded their neighbours.
+            Set<UUID> queued = new HashSet<>();
+            state.pendingPets.forEach(record -> queued.add(record.petUuid()));
+            for (PetRecord record : this.collectAutoRecallCandidates(server, player, now)) {
+                if (queued.add(record.petUuid())) state.pendingPets.addLast(record);
+            }
+            state.pendingCheck = false;
         }
-        state.pendingCheck = false;
         List<PetRecord> batch = this.takeNextBatch(server, player, state);
         if (batch.isEmpty()) {
-            state.continueNextBatchTick = -1L;
+            state.continueNextBatchTick = state.pendingPets.isEmpty() ? -1L : now + AUTO_RETRY_THROTTLE_TICKS;
             return;
         }
         this.startBatch(server, player, state, batch, summary -> { });
@@ -195,16 +208,31 @@ public final class AutoPetRecallController {
 
     private List<PetRecord> takeNextBatch(MinecraftServer server, ServerPlayerEntity player, PlayerAutoState state) {
         List<PetRecord> batch = new ArrayList<>(MAX_UNLOADED_PETS_PER_AUTO_RUN);
-        while (!state.pendingPets.isEmpty() && batch.size() < MAX_UNLOADED_PETS_PER_AUTO_RUN) {
+        long now = server.getOverworld().getTime();
+        int remaining = state.pendingPets.size();
+        while (remaining-- > 0 && !state.pendingPets.isEmpty() && batch.size() < MAX_UNLOADED_PETS_PER_AUTO_RUN) {
             PetRecord queued = state.pendingPets.removeFirst();
             PetRecord current = PetIndexState.get(server).getPet(queued.petUuid());
-            if (current != null && current.ownerUuid().equals(player.getUuid()) && !current.sitting()
-                    && current.dimensionId().equals(VersionCompat.getDimensionId(player))
-                    && distanceSqTo(current, player.getX(), player.getY(), player.getZ()) >= VANILLA_FOLLOW_TELEPORT_DISTANCE_SQ) {
-                batch.add(current);
+            if (this.isStillEligible(player, current)) {
+                if (this.recallService.isPetQuarantined(current.petUuid(), now)
+                        || now < this.petBackoffUntilTick.getOrDefault(current.petUuid(), 0L)) {
+                    state.pendingPets.addLast(current);
+                } else {
+                    batch.add(current);
+                }
             }
         }
         return batch;
+    }
+
+    private boolean isStillEligible(ServerPlayerEntity player, PetRecord record) {
+        if (record == null || !record.ownerUuid().equals(player.getUuid()) || record.sitting()
+                || !record.dimensionId().equals(VersionCompat.getDimensionId(player))
+                || distanceSqTo(record, player.getX(), player.getY(), player.getZ()) < VANILLA_FOLLOW_TELEPORT_DISTANCE_SQ) {
+            return false;
+        }
+        Entity loaded = this.tracker.getLoadedPet(record.petUuid());
+        return loaded == null || !(loaded.hasVehicle() || loaded.hasPassengers());
     }
 
     private boolean startBatch(MinecraftServer server, ServerPlayerEntity player, PlayerAutoState state,
@@ -341,10 +369,10 @@ public final class AutoPetRecallController {
         if (server.getOverworld() == null || this.playerStates.get(player.getUuid()) != state) {
             return;
         }
-        // A jump cancels the service's in-flight work; keep that selection until the owner lands.
-        if (!PetRecallService.isPlayerGroundedForRecall(player) && player.isAlive() && !player.isRemoved()
-                && batch.getFirst().dimensionId().equals(VersionCompat.getDimensionId(player))) {
-            this.restoreBatch(state, batch);
+        // Recheck the live index; retry unresolved pets after the remaining group.
+        for (PetRecord queued : batch) {
+            PetRecord current = PetIndexState.get(server).getPet(queued.petUuid());
+            if (this.isStillEligible(player, current)) state.pendingPets.addLast(current);
         }
         long now = server.getOverworld().getTime();
         state.continueNextBatchTick = state.pendingPets.isEmpty() ? -1L : now + 1L;

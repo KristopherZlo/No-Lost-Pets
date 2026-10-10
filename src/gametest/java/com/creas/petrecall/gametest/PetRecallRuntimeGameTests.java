@@ -42,7 +42,7 @@ import net.minecraft.world.World;
 public final class PetRecallRuntimeGameTests {
     private static final AtomicInteger SEQUENCE = new AtomicInteger();
     private enum Case {
-        NORMAL, BEFORE_UNLOAD, LATE_GROUP, LOGOUT_LOADING, LOGOUT_BETWEEN, DEATH_LOADING, DEATH_BETWEEN,
+        NORMAL, BEFORE_UNLOAD, LATE_GROUP, LATE_GROUP_WITH_MISSING, LOGOUT_LOADING, LOGOUT_BETWEEN, DEATH_LOADING, DEATH_BETWEEN,
         PORTAL_LOADING, PORTAL_BETWEEN, BLOCKED_DESTINATION, TIMEOUT, ACQUIRE_FAILURE,
         CUSTOM_DIMENSION, MOVING_DESTINATION, MULTIPLAYER, MANUAL_CONCURRENT, LIVE_AI, MIXED_SPECIES, TERRAIN, STRESS
     }
@@ -51,6 +51,8 @@ public final class PetRecallRuntimeGameTests {
     public void movementBeforeSourceUnloadStillRecallsWithoutAnotherTrigger(TestContext c) { run(c, Case.BEFORE_UNLOAD); }
     @GameTest(maxTicks = 1600, structure = "pet_recall_gametest:empty_32", environment = "pet_recall_gametest:isolated/pets_unloading_after_the_first_batch_join_the_same_recall_burst")
     public void petsUnloadingAfterTheFirstBatchJoinTheSameRecallBurst(TestContext c) { run(c, Case.LATE_GROUP); }
+    @GameTest(maxTicks = 1600, structure = "pet_recall_gametest:empty_32", environment = "pet_recall_gametest:isolated/late_unloaded_pets_join_while_a_missing_record_waits_for_retry")
+    public void lateUnloadedPetsJoinWhileAMissingRecordWaitsForRetry(TestContext c) { run(c, Case.LATE_GROUP_WITH_MISSING); }
     @GameTest(maxTicks = 1600, structure = "pet_recall_gametest:empty_32", environment = "pet_recall_gametest:isolated/logout_while_chunk_loads_then_rejoin_recovers_every_pet")
     public void logoutWhileChunkLoadsThenRejoinRecoversEveryPet(TestContext c) { run(c, Case.LOGOUT_LOADING); }
     @GameTest(maxTicks = 1600, structure = "pet_recall_gametest:empty_32", environment = "pet_recall_gametest:isolated/logout_between_batches_then_rejoin_recovers_every_pet")
@@ -117,6 +119,7 @@ public final class PetRecallRuntimeGameTests {
         ServerPlayerEntity other;
         ServerWorld portalWorld;
         int phase;
+        boolean cleaned;
         int ticks;
         int elapsed;
         int settled;
@@ -125,6 +128,7 @@ public final class PetRecallRuntimeGameTests {
         int nearAtInterrupt;
         boolean interrupted;
         boolean manualStarted;
+        UUID missingPet;
 
         Fixture(TestContext context, Case scenario) {
             this.context = context;
@@ -195,7 +199,7 @@ public final class PetRecallRuntimeGameTests {
             pet.setSitting(sitting);
             pet.setAiDisabled(true);
             pet.setNoGravity(true);
-            if (scenario == Case.MIXED_SPECIES && i % 4 == 0) pet.setBreedingAge(-24000);
+            if (scenario == Case.MIXED_SPECIES && i % 4 == 0 && !species.equals("parrot")) pet.setBreedingAge(-24000);
             pet.setPersistent();
             pet.setHealth(Math.min(7.0F, pet.getMaxHealth()));
             pet.setCustomName(Text.literal("runtime pet " + i));
@@ -227,6 +231,7 @@ public final class PetRecallRuntimeGameTests {
         }
 
         void tick() {
+            if (cleaned) return;
             try {
                 ticks++;
                 int deadline = switch (scenario) {
@@ -243,13 +248,22 @@ public final class PetRecallRuntimeGameTests {
                             (scenario == Case.MULTIPLAYER || scenario == Case.MANUAL_CONCURRENT) && i % 2 == 1 ? other : player, false).getUuid());
                     for (int i = 0; i < 5; i++) controls.add(spawn(count + i, player, true).getUuid());
                     controls.add(spawn(count + 5, other, scenario == Case.MULTIPLAYER || scenario == Case.MANUAL_CONCURRENT).getUuid());
+                    if (scenario == Case.LATE_GROUP_WITH_MISSING) {
+                        ChunkPos absent = new ChunkPos(sources.get(0).x - 1, sources.get(0).z);
+                        missingPet = UUID.randomUUID();
+                        PetRecord phantom = new PetRecord(missingPet, player.getUuid(), "minecraft:wolf",
+                                VersionCompat.getDimensionId(player), absent.toLong(),
+                                absent.getStartX() + 8, destination.getY(), absent.getStartZ() + 8, false, 7.0F);
+                        PetIndexState.get(world.getServer()).put(phantom);
+                        before.put(missingPet, phantom);
+                    }
                     if (scenario == Case.BEFORE_UNLOAD) {
                         auto.resumePlayer(player.getUuid());
                         recoveryAt = ticks + 30;
                         phase = 2;
                     } else {
                         forceSources(false);
-                        if (scenario == Case.LATE_GROUP) {
+                        if (lateGroup()) {
                             world.setChunkForced(sources.get(4).x, sources.get(4).z, true);
                         }
                         phase = 1;
@@ -257,7 +271,7 @@ public final class PetRecallRuntimeGameTests {
                     return;
                 }
                 if (phase == 1) {
-                    if (scenario == Case.LATE_GROUP) {
+                    if (lateGroup()) {
                         if (sources.subList(0, 4).stream().anyMatch(c -> VersionCompat.areChunkEntitiesLoaded(world, c))) return;
                     } else if (!sourcesUnloaded()) return;
                     check(context, nearCount() == 0, "No fixture pet may arrive before the production controller starts");
@@ -309,7 +323,9 @@ public final class PetRecallRuntimeGameTests {
                         "All production owners together must respect the four-chunk concurrency limit");
                 int near = nearCount();
                 if (scenario == Case.BEFORE_UNLOAD && ticks == recoveryAt) forceSources(false);
-                if (scenario == Case.LATE_GROUP && !interrupted && near > 0) {
+                if (lateGroup() && !interrupted && near > 0) {
+                    if (missingPet != null) check(context, service.isPetQuarantined(missingPet, world.getTime()),
+                            "The missing record must already be waiting when the late group unloads");
                     interrupted = true;
                     world.setChunkForced(sources.get(4).x, sources.get(4).z, false);
                 }
@@ -363,7 +379,11 @@ public final class PetRecallRuntimeGameTests {
                 }
                 check(context, elapsed < (scenario == Case.STRESS ? 450 : 700),
                         "Every eligible pet must eventually arrive without another jump, movement or command: " + progress());
+                if (missingPet != null) check(context, elapsed < 160,
+                        "Newly unloaded pets cannot wait behind a quarantined missing record: " + progress());
                 if (nearCount() != recalled.size() || service.isRecallActive(player.getUuid()) || service.isRecallActive(other.getUuid())) return;
+                if (missingPet != null) check(context, service.isPetQuarantined(missingPet, world.getTime()),
+                        "All real pets must arrive before the missing record is retried");
                 if (scenario == Case.LIVE_AI || scenario == Case.MIXED_SPECIES || scenario == Case.TERRAIN) {
                     // Keep live parrots as world entities; shoulder mounting has its own vanilla lifecycle.
                     if (scenario == Case.MIXED_SPECIES) player.getAbilities().flying = true;
@@ -387,6 +407,8 @@ public final class PetRecallRuntimeGameTests {
                 throw error;
             }
         }
+
+        boolean lateGroup() { return scenario == Case.LATE_GROUP || scenario == Case.LATE_GROUP_WITH_MISSING; }
 
         boolean loadingInterruption() {
             return scenario == Case.LOGOUT_LOADING || scenario == Case.DEATH_LOADING || scenario == Case.PORTAL_LOADING;
@@ -444,7 +466,7 @@ public final class PetRecallRuntimeGameTests {
 
         void assertIndex() {
             for (UUID id : before.keySet()) check(context, PetIndexState.get(world.getServer()).getPet(id) != null,
-                    "Transient failures and owner lifecycle events cannot erase a living pet's index entry");
+                    "Transient failures and owner lifecycle events cannot erase a living pet's index entry: " + id + "; " + progress());
         }
 
         void verify() {
@@ -473,7 +495,8 @@ public final class PetRecallRuntimeGameTests {
                     int i = recalled.indexOf(id);
                     String expectedType = i % 3 == 1 ? "minecraft:cat" : i % 3 == 2 ? "minecraft:parrot" : "minecraft:wolf";
                     check(context, Registries.ENTITY_TYPE.getId(pet.getType()).toString().equals(expectedType), "Species cannot change during recall");
-                    check(context, (pet.getBreedingAge() < 0) == (i % 4 == 0), "Baby/adult state must survive");
+                    check(context, (pet.getBreedingAge() < 0) == (i % 4 == 0 && !expectedType.equals("minecraft:parrot")),
+                            "Baby/adult state must survive: " + expectedType + " " + id);
                 }
             }
             for (UUID id : controls) {
@@ -513,6 +536,8 @@ public final class PetRecallRuntimeGameTests {
         void clearFaults() { for (ChunkPos chunk : sources) RecallFaults.clear(world, chunk); }
 
         void cleanup() {
+            if (cleaned) return;
+            cleaned = true;
             clearFaults();
             RecallBatchProbe.clear(player.getUuid());
             RecallBatchProbe.clear(other.getUuid());
