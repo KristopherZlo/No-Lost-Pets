@@ -86,6 +86,7 @@ public final class AutoRecallBatchGameTests {
         final List<UUID> missing = new ArrayList<>();
         final List<UUID> changed = new ArrayList<>();
         int phase;
+        boolean cleaned;
         int recallTicks;
         int pauseTicks;
         int pauseNear;
@@ -175,6 +176,7 @@ public final class AutoRecallBatchGameTests {
         }
 
         void tick() {
+            if (cleaned) return;
             try {
                 if (interruptLoading && phase == 2 && !jumped && service.isRecallActive(player.getUUID())) {
                     jumped = true;
@@ -320,6 +322,8 @@ public final class AutoRecallBatchGameTests {
         }
 
         void cleanup() {
+            if (cleaned) return;
+            cleaned = true;
             service.clearRuntime();
             auto.clearRuntime();
             forceSources(false);
