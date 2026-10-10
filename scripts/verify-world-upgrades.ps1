@@ -4,6 +4,7 @@ param(
     [string[]]$BaselineVersions = @('1.21.8', '1.21.9', '1.21.10', '1.21.11'),
     [string[]]$TargetVersions = @('26.1', '26.1.1', '26.1.2', '26.2', '26.3'),
     [switch]$SkipCrashTests,
+    [switch]$Resume,
     [string]$Java21Home = 'C:\Program Files\Eclipse Adoptium\jdk-21.0.6.7-hotspot',
     [string]$Java25Home,
     [string]$GradleUserHome,
@@ -30,12 +31,34 @@ $BaselineVersions = @($BaselineVersions | Sort-Object {[version]$_} -Unique)
 $TargetVersions = @($TargetVersions | Sort-Object {[version]$_} -Unique)
 if (-not $BaselineVersions.Count -or -not $TargetVersions.Count) { throw 'At least one baseline and target are required.' }
 $root = Join-Path $project "build/world-upgrades/$RunId"
-if (Test-Path -LiteralPath $root) { throw "Run directory already exists: $root. Choose a new RunId." }
-New-Item -ItemType Directory -Path $root | Out-Null
+$progressPath = Join-Path $root 'progress.json'
+if ($Resume) {
+    if (-not (Test-Path -LiteralPath $progressPath)) { throw "No saved progress to resume: $progressPath" }
+} else {
+    if (Test-Path -LiteralPath $root) { throw "Run directory already exists: $root. Choose a new RunId or use -Resume." }
+    New-Item -ItemType Directory -Path $root | Out-Null
+}
 $cache = Join-Path $project 'build/upgrade-launchers'
 New-Item -ItemType Directory -Force -Path $cache | Out-Null
 $utf8 = [Text.UTF8Encoding]::new($false)
 $results = [Collections.Generic.List[object]]::new()
+$resumeStages = @()
+$seedFingerprints = @{}
+if ($Resume) {
+    $progress = Get-Content -LiteralPath $progressPath -Raw | ConvertFrom-Json
+    if (($progress.baselines -join ',') -cne ($BaselineVersions -join ',') -or
+        ($progress.targets -join ',') -cne ($TargetVersions -join ',') -or
+        $progress.crashTests -ne (-not $SkipCrashTests)) { throw 'Resume requires the original version matrix and crash-test setting.' }
+    $resumeStages = @($progress.stages)
+    foreach ($property in $progress.seedFingerprints.PSObject.Properties) { $seedFingerprints[$property.Name] = $property.Value }
+}
+
+function Save-Progress {
+    $progress = [pscustomobject]@{ baselines = $BaselineVersions; targets = $TargetVersions;
+        crashTests = -not $SkipCrashTests; seedFingerprints = $seedFingerprints; stages = $results }
+    [IO.File]::WriteAllText("$progressPath.tmp", ($progress | ConvertTo-Json -Depth 12), $utf8)
+    Move-Item -LiteralPath "$progressPath.tmp" -Destination $progressPath -Force
+}
 
 function Invoke-HelperBuild([string]$Directory, [string]$Jdk, [string[]]$Arguments, [string]$Log) {
     $previousJava = $env:JAVA_HOME
@@ -65,6 +88,27 @@ function Get-FabricApi([string]$Version) {
 
 function Invoke-WorldServer([string]$Directory, [string]$Version, [string]$Phase,
         [string]$ModJar, [string]$HelperJar, [string]$Expected) {
+    $label = "$Version-$Phase-$($results.Count)"
+    $report = Join-Path $Directory "$label.json"
+    $modHash = (Get-FileHash -LiteralPath $ModJar -Algorithm SHA256).Hash
+    $helperHash = (Get-FileHash -LiteralPath $HelperJar -Algorithm SHA256).Hash
+    $expectedHash = if ($Expected) { (Get-FileHash -LiteralPath $Expected -Algorithm SHA256).Hash } else { '' }
+    if ($results.Count -lt $resumeStages.Count) {
+        $saved = $resumeStages[$results.Count]
+        if ($saved.version -cne $Version -or $saved.phase -cne $Phase -or $saved.report -ine $report -or
+            $saved.modSha256 -ine $modHash -or $saved.helperSha256 -ine $helperHash -or
+            $saved.expectedSha256 -ine $expectedHash -or
+            $saved.reportSha256 -ine (Get-FileHash -LiteralPath $report -Algorithm SHA256).Hash) {
+            throw "Saved stage or its inputs changed: $label. Start a new run."
+        }
+        $data = Get-Content -LiteralPath $report -Raw | ConvertFrom-Json
+        if (-not $data.passed -or $data.phase -cne $Phase -or $data.minecraft -cne $Version -or @($data.records).Count -ne 6) {
+            throw "Saved report is invalid: $label"
+        }
+        $results.Add($saved)
+        Write-Host "Reused verified stage $label"
+        return $report
+    }
     $native = -not $Version.StartsWith('1.21.')
     $target = if ($native) { Get-MinecraftTarget $Version } else { $legacyTargets[$Version] }
     $loader = $target.loader
@@ -95,8 +139,6 @@ spawn-protection=0
 max-tick-time=120000
 pause-when-empty-seconds=-1
 "@, $utf8)
-    $label = "$Version-$Phase"
-    $report = Join-Path $Directory "$label.json"
     if (Test-Path -LiteralPath $report) { throw "Refusing to reuse a report: $report" }
     $arguments = @('-Xmx2G', '-Xms512M', "`"-Dfabric.installer.server.gameJar=$serverJar`"",
         "`"-Dnolostpets.upgrade.phase=$Phase`"", "`"-Dnolostpets.upgrade.report=$report`"")
@@ -128,7 +170,9 @@ pause-when-empty-seconds=-1
             throw "Server logged an error or duplicate UUID: $label. See its log."
         }
         $results.Add([pscustomobject]@{ version = $Version; phase = $Phase; modVersion = $data.modVersion;
-            modSha256 = (Get-FileHash -LiteralPath $ModJar -Algorithm SHA256).Hash; report = $report; checks = $data.checks })
+            modSha256 = $modHash; helperSha256 = $helperHash; expectedSha256 = $expectedHash;
+            reportSha256 = (Get-FileHash -LiteralPath $report -Algorithm SHA256).Hash; report = $report; checks = $data.checks })
+        Save-Progress
         Write-Host "Passed $label"
         return $report
     } finally {
@@ -155,28 +199,50 @@ foreach ($version in $TargetVersions) {
 }
 $legacyHelpers = @{}
 $legacyMods = @{}
+$legacyBaselines = @{}
+$legacyModVersion = ((Get-Content -LiteralPath (Join-Path $legacy 'gradle.properties') |
+    Where-Object { $_ -match '^mod_version=' }) -replace '^mod_version=', '').Trim()
+if ($legacyModVersion -notmatch '^[A-Za-z0-9][A-Za-z0-9._-]*$') { throw 'Invalid legacy mod version.' }
 foreach ($version in $BaselineVersions) {
     $target = $legacyTargets[$version]
     Invoke-HelperBuild $legacy $Java21Home @('stageArtifacts', 'remapUpgradeTestJar', "-Pminecraft_version=$version",
-        "-Pyarn_mappings=$($target.yarn)", "-Pfabric_version=$($target.fabric_api)") (Join-Path $root "legacy-build-$version.log")
+        "-Pyarn_mappings=$($target.yarn)", "-Pfabric_version=$($target.fabric_api)",
+        "-Pmod_version=$legacyModVersion") (Join-Path $root "legacy-build-$version.log")
     $legacyHelpers[$version] = Join-Path $root "helper-$version.jar"
-    Copy-Item -LiteralPath (Join-Path $legacy "build/libs/NoLostPets-1.1.1+mc$version-upgrade-test.jar") -Destination $legacyHelpers[$version]
+    Copy-Item -LiteralPath (Join-Path $legacy "build/libs/NoLostPets-$legacyModVersion+mc$version-upgrade-test.jar") -Destination $legacyHelpers[$version]
     $archive = Join-Path $legacy "dist/1.21x/NoLostPets-fabric-$version.jar"
-    $legacyMods[$version] = if ($BaselineJar) { $BaselineJar } elseif (Test-Path -LiteralPath $archive) { $archive } else { Join-Path $legacy "dist/1.21x/$version/NoLostPets-1.1.1+mc$version.jar" }
+    $legacyBaselines[$version] = if ($BaselineJar) { $BaselineJar } else { $archive }
+    if (-not (Test-Path -LiteralPath $legacyBaselines[$version])) { throw "Historical baseline JAR missing: $($legacyBaselines[$version])" }
+    $legacyMods[$version] = Join-Path $legacy "dist/1.21x/$version/NoLostPets-$legacyModVersion+mc$version.jar"
+    if (-not (Test-Path -LiteralPath $legacyMods[$version])) { throw "Fresh legacy candidate JAR missing: $($legacyMods[$version])" }
 }
 
 function Copy-TestWorld([string]$Source, [string]$Directory) {
-    if (Test-Path -LiteralPath $Directory) { throw "Fixture directory already exists: $Directory" }
+    if (Test-Path -LiteralPath $Directory) {
+        if ($Resume -and (Test-Path -LiteralPath (Join-Path $Directory 'world')) -and
+            @($resumeStages | Where-Object { (Split-Path -Parent $_.report) -ieq $Directory }).Count -gt 0) { return }
+        throw "Fixture directory already exists without verified progress: $Directory"
+    }
     New-Item -ItemType Directory -Path $Directory | Out-Null
     Copy-Item -LiteralPath $Source -Destination (Join-Path $Directory 'world') -Recurse
 }
 
-$seedFingerprints = @{}
 foreach ($baseline in $BaselineVersions) {
     $seed = Join-Path $root "seed-$baseline"
-    $seedReport = Invoke-WorldServer $seed $baseline 'seed' $legacyMods[$baseline] $legacyHelpers[$baseline] ''
+    $seedReport = Invoke-WorldServer $seed $baseline 'seed' $legacyBaselines[$baseline] $legacyHelpers[$baseline] ''
     $seedWorld = Join-Path $seed 'world'
-    $seedFingerprints[$seedWorld] = Get-WorldFingerprint $seedWorld
+    $fingerprint = Get-WorldFingerprint $seedWorld
+    if ($seedFingerprints.ContainsKey($seedWorld) -and $seedFingerprints[$seedWorld] -cne $fingerprint) {
+        throw "Original seed world changed: $seedWorld"
+    }
+    $seedFingerprints[$seedWorld] = $fingerprint
+    if ($results.Count -ge $resumeStages.Count) { Save-Progress }
+
+    # Updating only the mod must preserve the old save on the same Minecraft version too.
+    $modUpdate = Join-Path $root "$baseline-mod-update"
+    Copy-TestWorld $seedWorld $modUpdate
+    $modExpected = Invoke-WorldServer $modUpdate $baseline 'verify' $legacyMods[$baseline] $legacyHelpers[$baseline] $seedReport
+    $null = Invoke-WorldServer $modUpdate $baseline 'restart' $legacyMods[$baseline] $legacyHelpers[$baseline] $modExpected
 
     # Direct upgrades start with independent copies of each original world.
     foreach ($version in $TargetVersions) {
