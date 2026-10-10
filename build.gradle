@@ -67,7 +67,7 @@ fabricApi {
         createSourceSet = true
         modId = "pet_recall_gametest"
         enableGameTests = true
-        enableClientGameTests = false
+        enableClientGameTests = true
         eula = true
     }
 }
@@ -111,9 +111,25 @@ java {
 }
 
 sourceSets {
+    compatTest {
+        compileClasspath += sourceSets.main.compileClasspath + sourceSets.main.output + sourceSets.gametest.compileClasspath
+    }
     upgradeTest {
         compileClasspath += sourceSets.main.compileClasspath + sourceSets.main.output
     }
+}
+
+def petCompatMods = findProperty("pet_compat_mods")
+def petCompatSpec = findProperty("pet_compat_spec")
+if (petCompatMods && petCompatSpec) {
+    dependencies { runtimeOnly fileTree(dir: petCompatMods, include: "*.jar") }
+    loom.mods.register("pet_recall_compat_test") { sourceSet sourceSets.compatTest }
+    loom.runs.named("gameTest") {
+        vmArg "-Dnolostpets.compat.spec=${file(petCompatSpec).absolutePath}"
+        vmArg "-Dfabric-api.gametest.filter=pet_recall_compat_test:*"
+        vmArg "-Dfabric-api.gametest.report-file=${file(petCompatSpec).parentFile}/gametest-results.xml"
+    }
+    tasks.named("runGameTest") { dependsOn tasks.named("compatTestClasses") }
 }
 tasks.register("upgradeTestJar", Jar) {
     from sourceSets.upgradeTest.output

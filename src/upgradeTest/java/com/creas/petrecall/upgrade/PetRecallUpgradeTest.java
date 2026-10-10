@@ -61,7 +61,7 @@ public final class PetRecallUpgradeTest implements ModInitializer {
 
     @Override
     public void onInitialize() {
-        require(List.of("verify", "recall", "restart").contains(phase), "Explicit upgrade test phase required");
+        require(List.of("verify", "recall", "restart", "crash-before-save", "crash-after-checkpoint", "recover-crash", "auto-after-upgrade").contains(phase), "Explicit upgrade test phase required");
         ServerLifecycleEvents.SERVER_STARTED.register(server -> {
             try { start(server); } catch (Throwable error) { fail(server, error); }
         });
@@ -82,11 +82,11 @@ public final class PetRecallUpgradeTest implements ModInitializer {
         require(index.size() == 6, "Migrated index must contain exactly six pets before chunk loads");
         for (PetRecord record : expected) require(record.equals(index.getPet(record.petUuid())), "Full persisted record differs: " + record.petUuid());
         require(index.getPetsForOwner(OWNER).size() == 5 && index.getPetsForOwner(OTHER).size() == 1, "Owner buckets before chunk loads");
-        if (!"restart".equals(phase)) {
+        if (!"restart".equals(phase) && !"recover-crash".equals(phase)) {
             for (int i = 1; i < 6; i++) require(originalWorld(server, i).getEntity(pet(i)) == null, "Pet must still be unloaded before migration assertion: " + i);
             checks.add("persisted index and owner buckets match before loading five remote pets");
-        } else checks.add("persisted index matches the preceding clean shutdown");
-        if ("recall".equals(phase)) recall(server, false);
+        } else checks.add("persisted index matches the preceding saved snapshot");
+        if (isRecallPhase() || "auto-after-upgrade".equals(phase)) recall(server, false);
         else loadForCheck(server);
     }
 
@@ -104,6 +104,13 @@ public final class PetRecallUpgradeTest implements ModInitializer {
         Connection connection = new Connection(PacketFlow.SERVERBOUND);
         if (channel != null) channel.finishAndReleaseAll();
         channel = new EmbeddedChannel(connection);
+        if ("auto-after-upgrade".equals(phase)) {
+            server.getPlayerList().placeNewPlayer(connection, player, CommonListenerCookie.createInitial(profile, false));
+            player.snapTo(17.5D, groundY + 1.0D, 17.5D, 0, 0);
+            player.setNoGravity(true);
+            player.setOnGround(true);
+            return;
+        }
         // Attach vanilla networking without joining: automatic login recall must not race the explicit call.
         player.connection = new ServerGamePacketListenerImpl(server, connection, player, CommonListenerCookie.createInitial(profile, false));
         player.snapTo(17.5D, groundY + 1.0D, 17.5D, 0, 0);
@@ -118,7 +125,39 @@ public final class PetRecallUpgradeTest implements ModInitializer {
 
     private void tick(MinecraftServer server) {
         if (++ticks > 1800) throw new AssertionError("Upgrade phase timed out after 90 seconds");
-        if ("recall".equals(phase) && !loading) {
+        if ("auto-after-upgrade".equals(phase) && !loading) {
+            for (int i : new int[] {0, 1, 5}) {
+                PetRecord record = PetIndexState.get(server).getPet(pet(i));
+                if (record == null || Math.abs(record.x() - 17.5D) > 10 || Math.abs(record.z() - 17.5D) > 10) return;
+            }
+            if (PetRecallMod.getRecallService().isRecallActive(OWNER)) return;
+            for (int i : new int[] {2, 3, 4}) {
+                PetRecord original = Arrays.stream(expected).filter(r -> r.petUuid().equals(pet(i))).findFirst().orElseThrow();
+                require(original.equals(PetIndexState.get(server).getPet(pet(i))), "Login recall cannot move sitting, foreign or other-dimension pets");
+            }
+            checks.add("real login event automatically recovered all three eligible unloaded pets after world upgrade");
+            loadForCheck(server);
+        }
+        if (phase.startsWith("crash-") && !done) {
+            boolean moved = snapshot(server).stream().anyMatch(r -> r.ownerUuid().equals(OWNER)
+                    && Math.abs(r.x() - 17.5D) < 10 && Math.abs(r.z() - 17.5D) < 10);
+            if (moved && PetRecallMod.getRecallService().isRecallActive(OWNER)) {
+                require(snapshot(server).stream().anyMatch(r -> r.ownerUuid().equals(OWNER) && r.x() > 1000), "Crash must interrupt a partial recall");
+                if ("crash-after-checkpoint".equals(phase)) {
+                    require(server.saveEverything(false, true, true), "Checkpoint must save before the forced crash");
+                    records = snapshot(server);
+                    checks.add("partial recall saved durably before forced process halt");
+                } else {
+                    records = Arrays.asList(expected);
+                    checks.add("partial recall interrupted before saving; recovery must retain the last saved pets");
+                }
+                done = true;
+                report();
+                Runtime.getRuntime().halt(137);
+            }
+            return;
+        }
+        if (isRecallPhase() && !loading) {
             if (recalled == null) return;
             if (!netherRecallStarted) {
                 require(recalled.totalKnown == 5 && recalled.recalled == 3 && recalled.skipped == 2 && recalled.failed == 0,
@@ -165,6 +204,10 @@ public final class PetRecallUpgradeTest implements ModInitializer {
         }
         done = true;
         server.halt(false);
+    }
+
+    private boolean isRecallPhase() {
+        return "recall".equals(phase) || "recover-crash".equals(phase) || phase.startsWith("crash-");
     }
 
     private void loadForCheck(MinecraftServer server) {

@@ -242,6 +242,18 @@ When the new index is absent, the mod reads legacy `pet_recall_index.dat` files,
 
 Unreadable files, invalid records, conflicting legacy indexes, and failed writes disable index operations for that server session. The server log explains the failure; commands report that the index is unavailable. Repair the data and restart before trying again.
 
+## Recall regression suites
+
+The additional runtime cases use the production event listeners and shared service. They cover recall before/after chunk unload, later-unloading groups, logout, death, respawn, portals, moving destinations, temporary failures, concurrent owners, live pet physics, mixed species, a real datapack dimension, and eight rounds of 256 pets. The fault mixin and helper entities are test-only.
+
+`runClientGameTest` sends real jump and walking input in new temporary singleplayer worlds. It checks airborne cancellation, recovery after landing, and following with normal pet AI and gravity. Use the same Minecraft/Fabric Gradle properties as for `runGameTest`.
+
+The pinned real-mod profiles are in `scripts/pet-compatibility-matrix.json`. Prepare a supported profile with `scripts/prepare-pet-compatibility.ps1 -Version <version> -Project <slug>`; add `-RunTests -JavaHome <jdk-directory>` to execute it. Run 1.21.x profiles from the `main` checkout and 26.x profiles from the `mc-26x` checkout. Profiles cover Companion, Doggy Talents Next, Chested Companions, IndyPets, and Better Wolf Companion where a matching Fabric release exists. The helper verifies real mod IDs, ownership, sitting, disk reloads, UUID uniqueness, and configured custom payloads, including chest contents, dog levels, and the IndyPets follow setting. Each prepared profile records dependency IDs and SHA-512 hashes under `build/compatibility/`.
+
+The saved-world runner in the `mc-26x` checkout now starts from each supported 1.21.x version, rebuilds the target JARs, checks direct and sequential upgrades, tests automatic login recall, and restarts after process halts before a save and after a saved partial recall. It uses archived legacy JARs when available; its reports record the actual JAR hashes. `-BaselineVersions` and `-TargetVersions` can select a smaller matrix; `-SkipCrashTests` excludes the crash stages.
+
+These additional scenarios are written but have not been executed yet. Compilation does not establish that the mod passes them.
+
 ## Debug Logging
 
 NoLostPets can write a dedicated trace file at `logs/NoLostPets-debug.log` inside the current game or server directory.

@@ -1,6 +1,9 @@
 param(
     [string]$LegacyProject = (Join-Path $PSScriptRoot '../../pet-recall'),
     [string]$BaselineJar,
+    [string[]]$BaselineVersions = @('1.21.8', '1.21.9', '1.21.10', '1.21.11'),
+    [string[]]$TargetVersions = @('26.1', '26.1.1', '26.1.2', '26.2', '26.3'),
+    [switch]$SkipCrashTests,
     [string]$Java21Home = 'C:\Program Files\Eclipse Adoptium\jdk-21.0.6.7-hotspot',
     [string]$Java25Home,
     [string]$GradleUserHome,
@@ -13,9 +16,19 @@ $project = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
 $legacy = [IO.Path]::GetFullPath($LegacyProject)
 $Java25Home = Resolve-JavaHome $Java25Home
 if (-not $GradleUserHome) { $GradleUserHome = Join-Path $legacy '.gradle-user-home' }
-if (-not $BaselineJar) { $BaselineJar = Join-Path $legacy 'dist/1.21x/NoLostPets-fabric-1.21.11.jar' }
-$BaselineJar = (Resolve-Path -LiteralPath $BaselineJar).Path
+if ($BaselineJar) { $BaselineJar = (Resolve-Path -LiteralPath $BaselineJar).Path; if ($BaselineVersions -ne '1.21.11') { throw '-BaselineJar requires -BaselineVersions 1.21.11' } }
+$legacyTargets = @{
+    '1.21.8' = @{ yarn='1.21.8+build.1'; loader='0.18.2'; fabric_api='0.136.1+1.21.8' }
+    '1.21.9' = @{ yarn='1.21.9+build.1'; loader='0.18.2'; fabric_api='0.134.1+1.21.9' }
+    '1.21.10' = @{ yarn='1.21.10+build.3'; loader='0.18.2'; fabric_api='0.138.4+1.21.10' }
+    '1.21.11' = @{ yarn='1.21.11+build.4'; loader='0.18.2'; fabric_api='0.141.3+1.21.11' }
+}
+foreach ($version in $BaselineVersions) { if (-not $legacyTargets.ContainsKey($version)) { throw "Unsupported baseline: $version" } }
+foreach ($version in $TargetVersions) { $null = Get-MinecraftTarget $version }
 if ($RunId -notmatch '^[a-zA-Z0-9_-]+$') { throw 'RunId must be a simple directory name.' }
+$BaselineVersions = @($BaselineVersions | Sort-Object {[version]$_} -Unique)
+$TargetVersions = @($TargetVersions | Sort-Object {[version]$_} -Unique)
+if (-not $BaselineVersions.Count -or -not $TargetVersions.Count) { throw 'At least one baseline and target are required.' }
 $root = Join-Path $project "build/world-upgrades/$RunId"
 if (Test-Path -LiteralPath $root) { throw "Run directory already exists: $root. Choose a new RunId." }
 New-Item -ItemType Directory -Path $root | Out-Null
@@ -52,9 +65,10 @@ function Get-FabricApi([string]$Version) {
 
 function Invoke-WorldServer([string]$Directory, [string]$Version, [string]$Phase,
         [string]$ModJar, [string]$HelperJar, [string]$Expected) {
-    $native = $Version -ne '1.21.11'
-    $loader = if ($native) { (Get-MinecraftTarget $Version).loader } else { '0.18.2' }
-    $api = if ($native) { (Get-MinecraftTarget $Version).fabric_api } else { '0.141.3+1.21.11' }
+    $native = -not $Version.StartsWith('1.21.')
+    $target = if ($native) { Get-MinecraftTarget $Version } else { $legacyTargets[$Version] }
+    $loader = $target.loader
+    $api = $target.fabric_api
     $jdk = if ($native) { $Java25Home } else { $Java21Home }
     $launcher = Join-Path $cache "fabric-server-$Version-$loader.jar"
     if (-not (Test-Path -LiteralPath $launcher)) {
@@ -101,7 +115,8 @@ pause-when-empty-seconds=-1
             }
         }
         $process.Refresh()
-        if ($process.ExitCode -ne 0) { throw "Server exited with $($process.ExitCode): $label. See its logs." }
+        $expectedExit = if ($Phase.StartsWith("crash-")) { 137 } else { 0 }
+        if ($process.ExitCode -ne $expectedExit) { throw "Server exited with $($process.ExitCode): $label. See its logs." }
         if (-not (Test-Path -LiteralPath $report)) { throw "No clean-shutdown report: $label" }
         $data = Get-Content -LiteralPath $report -Raw | ConvertFrom-Json
         if (-not $data.passed -or $data.phase -ne $Phase -or $data.minecraft -ne $Version -or @($data.records).Count -ne 6 -or
@@ -127,39 +142,84 @@ function Get-WorldFingerprint([string]$World) {
     return ($files | ForEach-Object { $_.FullName.Substring($World.Length) + ':' + (Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash }) -join "`n"
 }
 
-Invoke-HelperBuild $legacy $Java21Home @('remapUpgradeTestJar', '-Pminecraft_version=1.21.11',
-    '-Pyarn_mappings=1.21.11+build.4', '-Pfabric_version=0.141.3+1.21.11') (Join-Path $root 'legacy-helper-build.log')
-$legacyHelper = Get-ChildItem -LiteralPath (Join-Path $legacy 'build/libs') -Filter '*-upgrade-test.jar' | Select-Object -First 1 -ExpandProperty FullName
-$seed = Join-Path $root 'seed'
-$seedReport = Invoke-WorldServer $seed '1.21.11' 'seed' $BaselineJar $legacyHelper ''
-$seedWorld = Join-Path $seed 'world'
-$seedFingerprint = Get-WorldFingerprint $seedWorld
+# Build exactly the production JARs that this run will load; never reuse a stale candidate.
+$nativeHelpers = @{}
+$nativeMods = @{}
+foreach ($version in $TargetVersions) {
+    Invoke-HelperBuild $project $Java25Home (@('stageArtifacts', 'upgradeTestJar') + (Get-MinecraftGradleArguments $version)) (Join-Path $root "build-$version.log")
+    $target = Get-MinecraftTarget $version
+    $nativeMods[$version] = Join-Path $project "build/candidates/$version/NoLostPets-$($target.mod_version)+mc$version.jar"
+    $helperCopy = Join-Path $root "helper-$version.jar"
+    Copy-Item -LiteralPath (Join-Path $project "build/libs/NoLostPets-$($target.mod_version)+mc$version-upgrade-test.jar") -Destination $helperCopy
+    $nativeHelpers[$version] = $helperCopy
+}
+$legacyHelpers = @{}
+$legacyMods = @{}
+foreach ($version in $BaselineVersions) {
+    $target = $legacyTargets[$version]
+    Invoke-HelperBuild $legacy $Java21Home @('stageArtifacts', 'remapUpgradeTestJar', "-Pminecraft_version=$version",
+        "-Pyarn_mappings=$($target.yarn)", "-Pfabric_version=$($target.fabric_api)") (Join-Path $root "legacy-build-$version.log")
+    $legacyHelpers[$version] = Join-Path $root "helper-$version.jar"
+    Copy-Item -LiteralPath (Join-Path $legacy "build/libs/NoLostPets-1.1.1+mc$version-upgrade-test.jar") -Destination $legacyHelpers[$version]
+    $archive = Join-Path $legacy "dist/1.21x/NoLostPets-fabric-$version.jar"
+    $legacyMods[$version] = if ($BaselineJar) { $BaselineJar } elseif (Test-Path -LiteralPath $archive) { $archive } else { Join-Path $legacy "dist/1.21x/$version/NoLostPets-1.1.1+mc$version.jar" }
+}
 
-# Copy only the offline world, with no prefilled new index and no replacement entity NBT.
-foreach ($route in @('direct', 'sequential')) {
-    $directory = Join-Path $root $route
-    New-Item -ItemType Directory -Path $directory | Out-Null
-    Copy-Item -LiteralPath $seedWorld -Destination (Join-Path $directory 'world') -Recurse
-    $expected = $seedReport
-    $versions = if ($route -eq 'direct') { @('26.3') } else { $MinecraftVersions }
-    foreach ($version in $versions) {
-        Invoke-HelperBuild $project $Java25Home (@('upgradeTestJar') + (Get-MinecraftGradleArguments $version)) (Join-Path $root "helper-$route-$version.log")
-        $target = Get-MinecraftTarget $version
-        $mod = Join-Path $project "build/candidates/$version/NoLostPets-$($target.mod_version)+mc$version.jar"
-        $helper = Join-Path $project "build/libs/NoLostPets-$($target.mod_version)+mc$version-upgrade-test.jar"
-        $expected = Invoke-WorldServer $directory $version 'verify' $mod $helper $expected
-        $null = Invoke-WorldServer $directory $version 'restart' $mod $helper $expected
-        if ($version -eq '26.3') {
-            $expected = Invoke-WorldServer $directory $version 'recall' $mod $helper $expected
-            # A new directory also ensures report names and loader caches cannot mask a missing restart.
-            $restart = Join-Path $root "$route-after-recall"
-            New-Item -ItemType Directory -Path $restart | Out-Null
-            Copy-Item -LiteralPath (Join-Path $directory 'world') -Destination (Join-Path $restart 'world') -Recurse
-            $null = Invoke-WorldServer $restart $version 'restart' $mod $helper $expected
+function Copy-TestWorld([string]$Source, [string]$Directory) {
+    if (Test-Path -LiteralPath $Directory) { throw "Fixture directory already exists: $Directory" }
+    New-Item -ItemType Directory -Path $Directory | Out-Null
+    Copy-Item -LiteralPath $Source -Destination (Join-Path $Directory 'world') -Recurse
+}
+
+$seedFingerprints = @{}
+foreach ($baseline in $BaselineVersions) {
+    $seed = Join-Path $root "seed-$baseline"
+    $seedReport = Invoke-WorldServer $seed $baseline 'seed' $legacyMods[$baseline] $legacyHelpers[$baseline] ''
+    $seedWorld = Join-Path $seed 'world'
+    $seedFingerprints[$seedWorld] = Get-WorldFingerprint $seedWorld
+
+    # Direct upgrades start with independent copies of each original world.
+    foreach ($version in $TargetVersions) {
+        $directory = Join-Path $root "$baseline-direct-$version"
+        Copy-TestWorld $seedWorld $directory
+        $expected = Invoke-WorldServer $directory $version 'verify' $nativeMods[$version] $nativeHelpers[$version] $seedReport
+        $null = Invoke-WorldServer $directory $version 'restart' $nativeMods[$version] $nativeHelpers[$version] $expected
+        $expected = Invoke-WorldServer $directory $version 'auto-after-upgrade' $nativeMods[$version] $nativeHelpers[$version] $expected
+        $null = Invoke-WorldServer $directory $version 'restart' $nativeMods[$version] $nativeHelpers[$version] $expected
+        $expected = Invoke-WorldServer $directory $version 'recall' $nativeMods[$version] $nativeHelpers[$version] $expected
+        $null = Invoke-WorldServer $directory $version 'restart' $nativeMods[$version] $nativeHelpers[$version] $expected
+
+        if (-not $SkipCrashTests) {
+            foreach ($crashPhase in @('crash-before-save', 'crash-after-checkpoint')) {
+                $crash = Join-Path $root "$baseline-$version-$crashPhase"
+                Copy-TestWorld $seedWorld $crash
+                $checkpoint = Invoke-WorldServer $crash $version $crashPhase $nativeMods[$version] $nativeHelpers[$version] $seedReport
+                $recovered = Invoke-WorldServer $crash $version 'recover-crash' $nativeMods[$version] $nativeHelpers[$version] $checkpoint
+                $null = Invoke-WorldServer $crash $version 'restart' $nativeMods[$version] $nativeHelpers[$version] $recovered
+            }
         }
     }
+
+    $directory = Join-Path $root "$baseline-sequential"
+    Copy-TestWorld $seedWorld $directory
+    $expected = $seedReport
+    # Include in-place legacy world upgrades before the switch to the 26.x branch.
+    foreach ($version in @($BaselineVersions | Where-Object { [version]$_ -gt [version]$baseline } | Sort-Object {[version]$_})) {
+        $expected = Invoke-WorldServer $directory $version 'verify' $legacyMods[$version] $legacyHelpers[$version] $expected
+        $null = Invoke-WorldServer $directory $version 'restart' $legacyMods[$version] $legacyHelpers[$version] $expected
+    }
+    foreach ($version in $TargetVersions) {
+        $expected = Invoke-WorldServer $directory $version 'verify' $nativeMods[$version] $nativeHelpers[$version] $expected
+        $null = Invoke-WorldServer $directory $version 'restart' $nativeMods[$version] $nativeHelpers[$version] $expected
+    }
+    $final = $TargetVersions[-1]
+    $expected = Invoke-WorldServer $directory $final 'recall' $nativeMods[$final] $nativeHelpers[$final] $expected
+    $null = Invoke-WorldServer $directory $final 'restart' $nativeMods[$final] $nativeHelpers[$final] $expected
 }
-if ((Get-WorldFingerprint $seedWorld) -cne $seedFingerprint) { throw 'The original saved world changed during upgrade verification.' }
-$summary = [pscustomobject]@{ passed = $true; baseline = $BaselineJar; seedWorldUnchanged = $true; stages = $results }
+foreach ($seedWorld in $seedFingerprints.Keys) {
+    if ((Get-WorldFingerprint $seedWorld) -cne $seedFingerprints[$seedWorld]) { throw "Original seed world changed: $seedWorld" }
+}
+$summary = [pscustomobject]@{ passed = $true; baselines = $BaselineVersions; targets = $TargetVersions;
+    crashTests = -not $SkipCrashTests; seedWorldUnchanged = $true; stages = $results }
 [IO.File]::WriteAllText((Join-Path $root 'results.json'), ($summary | ConvertTo-Json -Depth 12), $utf8)
 Write-Host "Saved-world upgrade verification passed. Reports: $root"

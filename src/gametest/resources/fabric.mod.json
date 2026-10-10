@@ -11,7 +11,11 @@
     "fabric-gametest": [
       "com.creas.petrecall.gametest.PetRecallGameTests",
       "com.creas.petrecall.gametest.PetRecallBehaviorGameTests",
-      "com.creas.petrecall.gametest.AutoRecallBatchGameTests"
+      "com.creas.petrecall.gametest.AutoRecallBatchGameTests",
+      "com.creas.petrecall.gametest.PetRecallRuntimeGameTests"
+    ],
+    "fabric-client-gametest": [
+      "com.creas.petrecall.gametest.PetRecallClientGameTests"
     ]
   },
   "depends": {
@@ -20,5 +24,8 @@
     "minecraft": "${minecraft_version}",
     "java": ">=25",
     "pet_recall": "*"
-  }
+  },
+  "mixins": [
+    "pet_recall_gametest.mixins.json"
+  ]
 }
