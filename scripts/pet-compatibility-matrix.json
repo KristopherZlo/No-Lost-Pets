@@ -1,0 +1,102 @@
+{
+  "selectedOn": "2026-10-10",
+  "loader": "fabric",
+  "projects": [
+    {
+      "slug": "companion",
+      "projectId": "4w0EzGRW",
+      "downloads": 2011362,
+      "url": "https://modrinth.com/mod/companion",
+      "versions": {
+        "26.1.2": "YuV5s1E9",
+        "26.1.1": "YuV5s1E9",
+        "26.1": "YuV5s1E9"
+      },
+      "entities": [
+        "minecraft:wolf",
+        "minecraft:cat"
+      ],
+      "preservedKeys": []
+    },
+    {
+      "slug": "doggy-talents-next",
+      "projectId": "oXgmplvv",
+      "downloads": 426783,
+      "url": "https://modrinth.com/mod/doggy-talents-next",
+      "versions": {
+        "1.21.10": "xiOU9UEU"
+      },
+      "entities": [
+        "doggytalents:dog"
+      ],
+      "preservedKeys": [
+        "mode",
+        "dogGender",
+        "level_normal",
+        "level_kami",
+        "talents"
+      ]
+    },
+    {
+      "slug": "chested-companions",
+      "projectId": "yCDkPh3W",
+      "downloads": 216225,
+      "url": "https://modrinth.com/mod/chested-companions",
+      "versions": {
+        "1.21.8": "kwPH5Xlr"
+      },
+      "entities": [
+        "minecraft:wolf",
+        "minecraft:cat"
+      ],
+      "preservedKeys": [
+        "ChestItem",
+        "CCItems"
+      ]
+    },
+    {
+      "slug": "indypets",
+      "projectId": "SVJhmJvx",
+      "downloads": 103436,
+      "url": "https://modrinth.com/mod/indypets",
+      "versions": {
+        "26.1.1": "13bAElSv",
+        "1.21.9": "nQEqRnlb",
+        "26.1": "13bAElSv",
+        "26.1.2": "13bAElSv",
+        "1.21.8": "qUJQPwXB",
+        "1.21.11": "nQEqRnlb",
+        "1.21.10": "nQEqRnlb",
+        "26.3": "FCrpV1uD",
+        "26.2": "sGyN2R3Z"
+      },
+      "entities": [
+        "minecraft:wolf",
+        "minecraft:cat"
+      ],
+      "preservedKeys": [
+        "AllowedToFollow"
+      ]
+    },
+    {
+      "slug": "better-wolf-companion-mod",
+      "projectId": "hn5J0YBk",
+      "downloads": 34581,
+      "url": "https://modrinth.com/mod/better-wolf-companion-mod",
+      "versions": {
+        "26.1.1": "UBrMBESp",
+        "1.21.9": "YMbBFO2Y",
+        "26.1": "KAfkZBi7",
+        "26.1.2": "c7rmiPJg",
+        "1.21.8": "PvYwj1KW",
+        "1.21.11": "2EHZs4c5",
+        "1.21.10": "E7GsY6J7"
+      },
+      "entities": [
+        "minecraft:wolf",
+        "minecraft:cat"
+      ],
+      "preservedKeys": []
+    }
+  ]
+}

@@ -5,6 +5,9 @@ import com.creas.petrecall.index.PetRecord;
 import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
 import com.google.gson.JsonObject;
+import com.mojang.authlib.GameProfile;
+import net.minecraft.server.network.ServerPlayerEntity;
+import net.minecraft.network.packet.c2s.common.SyncedClientOptions;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
@@ -15,7 +18,6 @@ import net.fabricmc.fabric.api.event.lifecycle.v1.ServerLifecycleEvents;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerTickEvents;
 import net.fabricmc.loader.api.FabricLoader;
 import net.minecraft.entity.EntityType;
-import net.minecraft.entity.LazyEntityReference;
 import net.minecraft.entity.passive.CatEntity;
 import net.minecraft.entity.passive.PigEntity;
 import net.minecraft.entity.passive.TameableEntity;
@@ -25,8 +27,8 @@ import net.minecraft.server.world.ServerWorld;
 import net.minecraft.text.Text;
 import net.minecraft.util.math.BlockPos;
 import net.minecraft.block.Blocks;
-import net.minecraft.component.DataComponentTypes;
 import net.minecraft.util.DyeColor;
+import net.minecraft.component.DataComponentTypes;
 import net.minecraft.world.World;
 
 /** Only packaged in the separate test JAR, never in the mod. */
@@ -38,6 +40,7 @@ public final class PetRecallUpgradeTest implements ModInitializer {
     private final List<PetRecord> records = new ArrayList<>();
     private final List<String> checks = new ArrayList<>();
     private String failure;
+    private PetRecord[] expected;
     private int ticks;
     private boolean done;
 
@@ -47,15 +50,23 @@ public final class PetRecallUpgradeTest implements ModInitializer {
 
     @Override
     public void onInitialize() {
-        if (!"seed".equals(phase)) throw new IllegalArgumentException("This helper only creates the old saved world");
+        if (!List.of("seed", "verify", "restart").contains(phase)) throw new IllegalArgumentException("Explicit legacy upgrade phase required");
         ServerLifecycleEvents.SERVER_STARTED.register(server -> {
-            try { seed(server); } catch (Throwable error) { fail(server, error); }
+            try { if ("seed".equals(phase)) seed(server); else loadSnapshot(server); } catch (Throwable error) { fail(server, error); }
         });
         ServerTickEvents.END_SERVER_TICK.register(server -> {
             if (done) return;
             try {
                 if (++ticks > 1800) throw new AssertionError("Remote entities did not unload in 90 seconds");
                 if (ticks < 40) return;
+                if (!"seed".equals(phase)) {
+                    for (PetRecord record : expected) if (server.getWorld(record.dimensionKey()).getEntity(record.petUuid()) == null) return;
+                    if (server.getOverworld().getEntity(pet(6)) == null) return;
+                    verifySnapshot(server);
+                    done = true;
+                    server.stop(false);
+                    return;
+                }
                 // These were loaded when created, then genuinely unloaded and written by vanilla.
                 for (int i = 1; i < 6; i++) {
                     if (world(server, i).getEntity(pet(i)) != null) return;
@@ -92,8 +103,8 @@ public final class PetRecallUpgradeTest implements ModInitializer {
             animal.setUuid(pet(i));
             animal.refreshPositionAndAngles(x + 0.5D, y, 0.5D, 0, 0);
             animal.setTamed(true, true);
-            animal.setOwner(LazyEntityReference.ofUUID(i == 3 ? OTHER : OWNER));
-            if (i == 5) animal.setComponent(DataComponentTypes.CAT_COLLAR, DyeColor.YELLOW);
+            animal.setOwner(new ServerPlayerEntity(server, world, new GameProfile(i == 3 ? OTHER : OWNER, "OfflineSeedOwner"), SyncedClientOptions.createDefault()));
+            if (animal instanceof CatEntity) animal.setComponent(DataComponentTypes.CAT_COLLAR, DyeColor.YELLOW);
             else animal.setComponent(DataComponentTypes.WOLF_COLLAR, DyeColor.BLUE);
             animal.setSitting(i == 2);
             animal.setAiDisabled(true);
@@ -130,6 +141,48 @@ public final class PetRecallUpgradeTest implements ModInitializer {
             world.setBlockState(new BlockPos(x + dx, y - 1, z), Blocks.STONE.getDefaultState());
             for (int dy = 0; dy < 4; dy++) world.setBlockState(new BlockPos(x + dx, y + dy, z), Blocks.AIR.getDefaultState());
         }
+    }
+
+    private void loadSnapshot(MinecraftServer server) throws Exception {
+        JsonObject source = GSON.fromJson(Files.readString(Path.of(System.getProperty("nolostpets.upgrade.expected"))), JsonObject.class);
+        require(source.get("passed").getAsBoolean(), "Expected snapshot must be successful");
+        expected = GSON.fromJson(source.get("records"), PetRecord[].class);
+        PetIndexState index = PetIndexState.get(server);
+        require(expected.length == 6 && index.size() == 6, "All six records must survive before any remote entity loads");
+        require(index.getPetsForOwner(OWNER).size() == 5 && index.getPetsForOwner(OTHER).size() == 1, "Owner buckets survive legacy update");
+        for (PetRecord record : expected) {
+            require(record.equals(index.getPet(record.petUuid())), "Persisted record differs before source load: " + record.petUuid());
+            ServerWorld target = server.getWorld(record.dimensionKey());
+            require(target != null, "Saved dimension must exist");
+            target.setChunkForced(record.chunkPos().x, record.chunkPos().z, true);
+            target.getChunk(record.chunkPos().x, record.chunkPos().z);
+        }
+        checks.add("complete persisted index checked before remote entity loading");
+    }
+
+    private void verifySnapshot(MinecraftServer server) {
+        require(PetIndexState.get(server).size() == 6, "Loading cannot change the number of pets");
+        for (int i = 0; i < 6; i++) {
+            TameableEntity animal = (TameableEntity) world(server, i).getEntity(pet(i));
+            PetRecord expectedRecord = java.util.Arrays.stream(expected).filter(r -> r.petUuid().equals(animal.getUuid())).findFirst().orElseThrow();
+            require(i == 5 ? animal instanceof CatEntity : animal instanceof WolfEntity, "Species survives legacy update");
+            require(animal.isTamed() && animal.getOwnerReference().getUuid().equals(i == 3 ? OTHER : OWNER), "Owner survives legacy update");
+            require(animal.getHealth() == 7.5F && animal.isSitting() == (i == 2) && animal.isAiDisabled() && animal.hasNoGravity(), "Health and flags survive legacy update");
+            require(animal.getCustomName() != null && animal.getCustomName().getString().equals("Upgrade pet " + i)
+                    && animal.getCommandTags().contains("upgrade_pet_" + i), "Name and custom tags survive legacy update");
+            require((animal instanceof CatEntity cat ? cat.getCollarColor() : ((WolfEntity) animal).getCollarColor())
+                    == (i == 5 ? DyeColor.YELLOW : DyeColor.BLUE), "Collar survives legacy update");
+            require(animal.getX() == expectedRecord.x() && animal.getY() == expectedRecord.y() && animal.getZ() == expectedRecord.z(), "Position survives legacy update");
+            int copies = 0;
+            for (ServerWorld target : server.getWorlds()) for (net.minecraft.entity.Entity entity : target.iterateEntities()) if (entity.getUuid().equals(pet(i))) copies++;
+            require(copies == 1, "A saved UUID cannot be duplicated");
+            records.add(PetIndexState.get(server).getPet(pet(i)));
+            world(server, i).setChunkForced(expectedRecord.chunkPos().x, expectedRecord.chunkPos().z, false);
+        }
+        PigEntity neighbor = (PigEntity) server.getOverworld().getEntity(pet(6));
+        require(neighbor.getHealth() == 5.0F && neighbor.getX() == 2049.5D && neighbor.getY() == 65.0D && neighbor.getZ() == 0.5D
+                && neighbor.getCommandTags().contains("upgrade_neighbor"), "Ordinary neighbor survives unchanged");
+        checks.addAll(List.of("six pets retain UUID, owner, species, health, stance, AI, gravity, collar, name and tags", "no duplicated UUID", "ordinary neighbor unchanged"));
     }
 
     private void fail(MinecraftServer server, Throwable error) {

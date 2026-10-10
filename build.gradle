@@ -63,7 +63,7 @@ fabricApi {
         createSourceSet = true
         modId = "pet_recall_gametest"
         enableGameTests = true
-        enableClientGameTests = false
+        enableClientGameTests = true
         eula = true
     }
 }
@@ -106,24 +106,42 @@ java {
 }
 
 sourceSets {
+    compatTest {
+        compileClasspath += sourceSets.main.compileClasspath + sourceSets.main.output + sourceSets.gametest.compileClasspath
+    }
     upgradeTest {
         compileClasspath += sourceSets.main.compileClasspath + sourceSets.main.output
     }
 }
+
+def petCompatMods = findProperty("pet_compat_mods")
+def petCompatSpec = findProperty("pet_compat_spec")
+if (petCompatMods && petCompatSpec) {
+    dependencies { modRuntimeOnly fileTree(dir: petCompatMods, include: "*.jar") }
+    loom.mods.register("pet_recall_compat_test") { sourceSet sourceSets.compatTest }
+    loom.runs.named("gameTest") {
+        vmArg "-Dnolostpets.compat.spec=${file(petCompatSpec).absolutePath}"
+        vmArg "-Dfabric-api.gametest.filter=pet_recall_compat_test:*"
+        vmArg "-Dfabric-api.gametest.report-file=${file(petCompatSpec).parentFile}/gametest-results.xml"
+    }
+    tasks.named("runGameTest") { dependsOn tasks.named("compatTestClasses") }
+}
 tasks.named("compileUpgradeTestJava") {
     doFirst {
-        if (project.minecraft_version.toString() != "1.21.11") {
-            throw new GradleException("The saved-world seed helper targets 1.21.11; use verify-world-upgrades.ps1 from the mc-26x checkout.")
+        if (!(project.minecraft_version.toString() in ["1.21.8", "1.21.9", "1.21.10", "1.21.11"])) {
+            throw new GradleException("The saved-world helper targets 1.21.8 through 1.21.11; use verify-world-upgrades.ps1 from the mc-26x checkout.")
         }
     }
 }
 tasks.register("upgradeTestJar", Jar) {
     from sourceSets.upgradeTest.output
+    archiveVersion = artifactVersion
     archiveClassifier = "upgrade-test-dev"
 }
 tasks.register("remapUpgradeTestJar", net.fabricmc.loom.task.RemapJarTask) {
     dependsOn tasks.named("upgradeTestJar")
     inputFile = tasks.named("upgradeTestJar").flatMap { it.archiveFile }
+    archiveVersion = artifactVersion
     archiveClassifier = "upgrade-test"
     addNestedDependencies = false
 }
