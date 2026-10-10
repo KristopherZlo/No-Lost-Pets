@@ -47,7 +47,8 @@ public final class PetRecallClientGameTests implements FabricClientGameTest {
             session.getServer().runOnServer(server -> require(state.world.getBlockState(new BlockPos(980, state.floorY, 980)).isOf(Blocks.STONE),
                     "The destination floor must exist before teleporting the real player"));
             session.getServer().runCommand("tp @a 980.5 " + (state.floorY + 1) + " 980.5");
-            context.waitFor(client -> client.player != null && client.player.isAlive() && client.player.isOnGround());
+            context.waitFor(client -> client.player != null && client.player.isAlive() && client.player.isOnGround()
+                    && client.player.squaredDistanceTo(980.5D, state.floorY + 1.0D, 980.5D) < 0.01D);
             session.getServer().runOnServer(server -> {
                 state.world = server.getOverworld();
                 state.owner = server.getPlayerManager().getPlayerList().getFirst();
@@ -96,19 +97,24 @@ public final class PetRecallClientGameTests implements FabricClientGameTest {
             }
             context.getInput().holdKey(32);
             try {
-                context.waitFor(client -> !client.player.isOnGround());
+                context.waitFor(client -> !client.player.isOnGround() && client.player.getY() > state.floorY + 1.1D);
             } finally {
                 context.getInput().releaseKey(32);
             }
+            await(context, session, () -> !state.owner.isOnGround() && state.owner.getY() > state.floorY + 1.1D, 8,
+                    "Server must receive the real airborne movement state");
             session.getServer().runOnServer(server -> {
                 if (!interruptLoading) PetRecallMod.getAutoRecallController().resumePlayer(state.owner.getUuid());
                 for (ChunkPos chunk : state.chunks) RecallFaults.clear(state.world, chunk);
-            });
-            context.waitTicks(2);
-            session.getServer().runOnServer(server -> {
-                require(!state.owner.isOnGround(), "Server must receive the real airborne movement state");
                 require(state.near() == 0, "Pets cannot teleport while the actual client is airborne");
             });
+            for (int i = 0; i < 40 && context.computeOnClient(client -> !client.player.isOnGround()); i++) {
+                context.waitTick();
+                session.getServer().runOnServer(server -> {
+                    if (!state.owner.isOnGround()) require(state.near() == 0,
+                            "Pets cannot teleport before the server receives the real landing");
+                });
+            }
             context.waitFor(client -> client.player.isOnGround());
             await(context, session, () -> state.near() == 40 && !PetRecallMod.getRecallService().isRecallActive(state.owner.getUuid()),
                     700, "One real landing must recover every pet without another input");
