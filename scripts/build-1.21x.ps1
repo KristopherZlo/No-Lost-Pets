@@ -98,6 +98,7 @@ foreach ($version in $Versions) {
         Write-Host "Running GameTest smoke for Fabric target $version mod $($target.mod_version)"
         & (Join-Path $PSScriptRoot "verify-all.ps1") `
             -Versions @($version) `
+            -Suite full `
             -JavaHome $resolvedJavaHome `
             -TimeoutSeconds $GameTestTimeoutSeconds
 

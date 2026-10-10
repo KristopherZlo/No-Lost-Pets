@@ -34,7 +34,7 @@ import net.minecraft.util.math.Vec3d;
 
 public final class PetRecallBehaviorGameTests {
     private static final AtomicInteger REMOTE_CHUNK_SEQUENCE = new AtomicInteger();
-    @GameTest(maxTicks = 40)
+    @GameTest(maxTicks = 40, environment = "pet_recall_gametest:isolated/duplicate_records_recall_one_entity_exactly_once")
     public void duplicateRecordsRecallOneEntityExactlyOnce(TestContext context) {
         Fixture f = new Fixture(context);
         WolfEntity wolf = f.wolf(new BlockPos(1, 2, 1));
@@ -57,7 +57,7 @@ public final class PetRecallBehaviorGameTests {
         context.complete();
     }
 
-    @GameTest(maxTicks = 40)
+    @GameTest(maxTicks = 40, environment = "pet_recall_gametest:isolated/throwing_completion_does_not_keep_player_or_pet_locked")
     public void throwingCompletionDoesNotKeepPlayerOrPetLocked(TestContext context) {
         Fixture f = new Fixture(context);
         WolfEntity wolf = f.wolf(new BlockPos(1, 2, 1));
@@ -73,7 +73,7 @@ public final class PetRecallBehaviorGameTests {
         context.complete();
     }
 
-    @GameTest(maxTicks = 40)
+    @GameTest(maxTicks = 40, environment = "pet_recall_gametest:isolated/current_owner_overrides_stale_record_and_pet_is_not_moved")
     public void currentOwnerOverridesStaleRecordAndPetIsNotMoved(TestContext context) {
         Fixture f = new Fixture(context);
         WolfEntity wolf = f.wolf(new BlockPos(1, 2, 1));
@@ -93,7 +93,7 @@ public final class PetRecallBehaviorGameTests {
         context.complete();
     }
 
-    @GameTest(maxTicks = 40)
+    @GameTest(maxTicks = 40, environment = "pet_recall_gametest:isolated/actual_loaded_dimension_overrides_stale_index_dimension")
     public void actualLoadedDimensionOverridesStaleIndexDimension(TestContext context) {
         Fixture f = new Fixture(context);
         WolfEntity wolf = f.wolf(new BlockPos(1, 2, 1));
@@ -113,7 +113,7 @@ public final class PetRecallBehaviorGameTests {
         context.complete();
     }
 
-    @GameTest(maxTicks = 40, structure = "pet_recall_gametest:empty_32")
+    @GameTest(maxTicks = 40, structure = "pet_recall_gametest:empty_32", environment = "pet_recall_gametest:isolated/blocked_destination_keeps_original_pet_and_its_state")
     public void blockedDestinationKeepsOriginalPetAndItsState(TestContext context) {
         Fixture f = new Fixture(context, new BlockPos(16, 2, 16));
         context.setBlockState(new BlockPos(1, 1, 1), Blocks.STONE);
@@ -142,7 +142,7 @@ public final class PetRecallBehaviorGameTests {
         context.complete();
     }
 
-    @GameTest(maxTicks = 40)
+    @GameTest(maxTicks = 40, environment = "pet_recall_gametest:isolated/fractional_source_position_does_not_change_destination_collision_check")
     public void fractionalSourcePositionDoesNotChangeDestinationCollisionCheck(TestContext context) {
         Fixture f = new Fixture(context);
         WolfEntity wolf = f.wolf(new BlockPos(1, 2, 1));
@@ -166,7 +166,7 @@ public final class PetRecallBehaviorGameTests {
         context.complete();
     }
 
-    @GameTest(maxTicks = 40)
+    @GameTest(maxTicks = 40, environment = "pet_recall_gametest:isolated/riding_pet_is_skipped_without_breaking_vehicle_relationship")
     public void ridingPetIsSkippedWithoutBreakingVehicleRelationship(TestContext context) {
         Fixture f = new Fixture(context);
         WolfEntity wolf = f.wolf(new BlockPos(1, 2, 1));
@@ -182,7 +182,7 @@ public final class PetRecallBehaviorGameTests {
         context.complete();
     }
 
-    @GameTest(maxTicks = 40)
+    @GameTest(maxTicks = 40, environment = "pet_recall_gametest:isolated/failed_owner_encoding_keeps_modded_pet_record_and_does_not_teleport")
     public void failedOwnerEncodingKeepsModdedPetRecordAndDoesNotTeleport(TestContext context) {
         Fixture f = new Fixture(context);
         NbtCompanion pet = f.companion(new BlockPos(1, 2, 1));
@@ -212,7 +212,7 @@ public final class PetRecallBehaviorGameTests {
         context.complete();
     }
 
-    @GameTest(maxTicks = 40)
+    @GameTest(maxTicks = 40, environment = "pet_recall_gametest:isolated/riding_modded_companion_keeps_ownership_and_is_skipped")
     public void ridingModdedCompanionKeepsOwnershipAndIsSkipped(TestContext context) {
         Fixture f = new Fixture(context);
         NbtCompanion pet = f.companion(new BlockPos(1, 2, 1));
@@ -241,12 +241,12 @@ public final class PetRecallBehaviorGameTests {
         context.complete();
     }
 
-    @GameTest(maxTicks = 800)
+    @GameTest(maxTicks = 800, environment = "pet_recall_gametest:isolated/unloaded_pet_and_neighbor_survive_recall_and_second_disk_load")
     public void unloadedPetAndNeighborSurviveRecallAndSecondDiskLoad(TestContext context) {
         unloadedRoundTrip(context, false);
     }
 
-    @GameTest(maxTicks = 40)
+    @GameTest(maxTicks = 40, environment = "pet_recall_gametest:isolated/cancelled_session_finishes_once_keeps_index_and_allows_new_recall")
     public void cancelledSessionFinishesOnceKeepsIndexAndAllowsNewRecall(TestContext context) {
         Fixture f = new Fixture(context);
         WolfEntity wolf = f.wolf(new BlockPos(1, 2, 1));
@@ -283,7 +283,7 @@ public final class PetRecallBehaviorGameTests {
         context.complete();
     }
 
-    @GameTest(maxTicks = 40)
+    @GameTest(maxTicks = 40, environment = "pet_recall_gametest:isolated/destroyed_pet_is_removed_from_index_but_chunk_unload_keeps_record")
     public void destroyedPetIsRemovedFromIndexButChunkUnloadKeepsRecord(TestContext context) {
         Fixture f = new Fixture(context);
         WolfEntity wolf = f.wolf(new BlockPos(1, 2, 1));
@@ -300,7 +300,7 @@ public final class PetRecallBehaviorGameTests {
         context.complete();
     }
 
-    @GameTest(maxTicks = 800)
+    @GameTest(maxTicks = 800, environment = "pet_recall_gametest:isolated/unloaded_sitting_pet_and_neighbor_stay_at_source_after_second_disk_load")
     public void unloadedSittingPetAndNeighborStayAtSourceAfterSecondDiskLoad(TestContext context) {
         unloadedRoundTrip(context, true);
     }

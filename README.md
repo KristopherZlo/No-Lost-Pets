@@ -219,16 +219,16 @@ Windows helper scripts are included for all supported versions:
 
 All test clients share the same runtime data in `run/shared`, including worlds, config, and `options.txt`, while still launching different Minecraft versions.
 
-`verify-all.ps1` runs unit tests and GameTests, including the built-in `verify singleplayer` and `verify multiplayer` command suites, across `1.21.8` through `1.21.11`, sequentially. It requires a nonzero count of passed required GameTests, a successful Gradle build, and exit code zero. Logs are written to `build/tmp/verify-all/`.
+`verify-all.ps1` runs all unit tests and the selected GameTest suite. Without `-Versions` it checks all four 1.21.x targets sequentially. It requires exit code zero, a successful Gradle build, and fresh XML reports containing every expected test with no failures, errors, or skips. Logs and timings are written to `build/tmp/verify-all/<run>/`.
 
 Release builds use `scripts/build-1.21x.ps1`. Each Minecraft target has its own `mod_version` in the script matrix, so hotfix versions can differ between game versions. By default the build is gated by two smoke checks per target before a jar is produced:
 
 ```powershell
 .\scripts\smoke-client.ps1 -Version 1.21.11
-.\scripts\verify-all.ps1 -Versions 1.21.11
+.\scripts\verify-all.ps1 -Versions 1.21.11 -Suite full
 ```
 
-The client smoke starts `runClient` and waits for Minecraft, LWJGL, and NoLostPets to initialize. The GameTest smoke starts the Minecraft GameTest runtime and runs the command-path self-test suite.
+The client smoke starts `runClient` and waits for Minecraft, LWJGL, and NoLostPets to initialize. The release GameTest check uses `full`, including command-path tests, lifecycle regressions and stress.
 
 Two-client LAN smoke is also available:
 
@@ -240,7 +240,23 @@ It launches two Minecraft clients with different usernames, loads the named loca
 
 ## Recall regression suites
 
-The additional runtime cases use the production event listeners and shared service. They cover recall before/after chunk unload, later-unloading groups, logout, death, respawn, portals, moving destinations, temporary failures, concurrent owners, live pet physics, mixed species, a real datapack dimension, and eight rounds of 256 pets. The fault mixin and helper entities are test-only.
+The suite is selected with `-Suite` in the PowerShell runner or `-Ppet_test_suite=<suite>` in Gradle. The default is `fast`. Each server scenario uses a separate native test environment so tests that clear shared runtime state cannot run concurrently.
+
+| Suite | Server cases | Purpose |
+| --- | ---: | --- |
+| `fast` | 28 | Command and behavior contracts, batch recovery, and one production trigger recalling 33 pets from five unloaded chunks in batches of 16, 16 and 1 |
+| `regression` | 46 | Fast cases plus unload timing, logout, death, respawn, portals, temporary failures, concurrent owners, physics, mixed species and a custom dimension |
+| `stress` | 1 | Eight rounds of 256 pets, with ticket release, disk reload and UUID/state checks |
+| `full` | 47 | Regression and stress together |
+
+For a daily check on one target, then a full release matrix:
+
+```powershell
+.\scripts\verify-all.ps1 -Versions 1.21.11 -Suite fast
+.\scripts\verify-all.ps1 -Suite full
+```
+
+Add `-ListTests` to inspect the exact inventory without starting Gradle or Minecraft. Every runner suite includes all unit tests. Scheduler unit tests advance virtual ticks through the real 200-tick timeout and queue sizes 15, 16, 17, 32, 33, 40 and 256. Unchanged compilation tasks keep their cache. Structural runtime cases finish after their assertions and real source-chunk reload; only physics cases retain the 100-tick observation period. Fault injection and batch observation are test-only.
 
 `runClientGameTest` sends real jump and walking input in new temporary singleplayer worlds. It checks airborne cancellation, recovery after landing, and following with normal pet AI and gravity. Use the same Minecraft/Fabric Gradle properties as for `runGameTest`.
 
@@ -248,7 +264,7 @@ The pinned real-mod profiles are in `scripts/pet-compatibility-matrix.json`. Pre
 
 The saved-world runner in the `mc-26x` checkout now starts from each supported 1.21.x version, rebuilds the target JARs, checks direct and sequential upgrades, tests automatic login recall, and restarts after process halts before a save and after a saved partial recall. It uses archived legacy JARs when available; its reports record the actual JAR hashes. `-BaselineVersions` and `-TargetVersions` can select a smaller matrix; `-SkipCrashTests` excludes the crash stages.
 
-These additional scenarios are written but have not been executed yet. Compilation does not establish that the mod passes them.
+The previous 1.21.11 server run had 39 passing and seven failing mod cases. The revised suite has not been run yet; compilation does not establish that it passes or measure its speed. Real client, companion-mod and expanded saved-world runs remain separate checks.
 
 ## Debug Logging
 

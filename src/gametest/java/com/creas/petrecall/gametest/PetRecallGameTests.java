@@ -34,7 +34,7 @@ public final class PetRecallGameTests {
     private static final int PLATFORM_MAX = 7;
     private static final int PLATFORM_Y = 1;
 
-    @GameTest(maxTicks = 80)
+    @GameTest(maxTicks = 80, environment = "pet_recall_gametest:isolated/loaded_force_recall_teleports_owned_wolf")
     public void loadedForceRecallTeleportsOwnedWolf(TestContext context) {
         PetRecallMod.getTracker().clearRuntime();
         buildPlatform(context);
@@ -79,7 +79,7 @@ public final class PetRecallGameTests {
         });
     }
 
-    @GameTest(maxTicks = 700)
+    @GameTest(maxTicks = 700, environment = "pet_recall_gametest:isolated/stale_unloaded_record_is_removed_after_three_failed_recalls")
     public void staleUnloadedRecordIsRemovedAfterThreeFailedRecalls(TestContext context) {
         PetRecallMod.getTracker().clearRuntime();
         buildPlatform(context);
@@ -143,7 +143,7 @@ public final class PetRecallGameTests {
         });
     }
 
-    @GameTest(maxTicks = 60)
+    @GameTest(maxTicks = 60, environment = "pet_recall_gametest:isolated/cross_dimension_record_is_skipped")
     public void crossDimensionRecordIsSkipped(TestContext context) {
         PetRecallMod.getTracker().clearRuntime();
         buildPlatform(context);
@@ -180,7 +180,7 @@ public final class PetRecallGameTests {
         });
     }
 
-    @GameTest(maxTicks = 60)
+    @GameTest(maxTicks = 60, environment = "pet_recall_gametest:isolated/sitting_loaded_pet_is_skipped")
     public void sittingLoadedPetIsSkipped(TestContext context) {
         PetRecallMod.getTracker().clearRuntime();
         buildPlatform(context);
@@ -216,7 +216,7 @@ public final class PetRecallGameTests {
         });
     }
 
-    @GameTest(maxTicks = 60)
+    @GameTest(maxTicks = 60, environment = "pet_recall_gametest:isolated/airborne_player_cannot_start_recall")
     public void airbornePlayerCannotStartRecall(TestContext context) {
         PetRecallMod.getTracker().clearRuntime();
         buildPlatform(context);
@@ -255,7 +255,7 @@ public final class PetRecallGameTests {
         });
     }
 
-    @GameTest(maxTicks = 80)
+    @GameTest(maxTicks = 80, environment = "pet_recall_gametest:isolated/short_grass_counts_as_safe_recall_spot")
     public void shortGrassCountsAsSafeRecallSpot(TestContext context) {
         PetRecallMod.getTracker().clearRuntime();
         buildPlatform(context);
@@ -301,7 +301,7 @@ public final class PetRecallGameTests {
         });
     }
 
-    @GameTest(maxTicks = 80)
+    @GameTest(maxTicks = 80, environment = "pet_recall_gametest:isolated/water_and_leaves_are_rejected_as_recall_spots")
     public void waterAndLeavesAreRejectedAsRecallSpots(TestContext context) {
         PetRecallMod.getTracker().clearRuntime();
         buildPlatform(context);
@@ -358,7 +358,7 @@ public final class PetRecallGameTests {
         });
     }
 
-    @GameTest(maxTicks = 80)
+    @GameTest(maxTicks = 80, environment = "pet_recall_gametest:isolated/loaded_ownership_mismatch_does_not_delete_record")
     public void loadedOwnershipMismatchDoesNotDeleteRecord(TestContext context) {
         PetRecallMod.getTracker().clearRuntime();
         buildPlatform(context);
@@ -395,7 +395,7 @@ public final class PetRecallGameTests {
         });
     }
 
-    @GameTest(maxTicks = 900)
+    @GameTest(maxTicks = 900, environment = "pet_recall_gametest:isolated/verify_commands_pass_sequentially")
     public void verifyCommandsPassSequentially(TestContext context) {
         PetRecallMod.getTracker().clearRuntime();
         buildPlatform(context);

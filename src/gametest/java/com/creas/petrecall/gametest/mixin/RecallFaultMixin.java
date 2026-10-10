@@ -1,5 +1,6 @@
-package com.creas.petrecall.gametest;
+package com.creas.petrecall.gametest.mixin;
 
+import com.creas.petrecall.gametest.RecallFaults;
 import com.creas.petrecall.util.VersionCompat;
 import net.minecraft.server.world.ServerWorld;
 import net.minecraft.util.math.ChunkPos;

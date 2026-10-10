@@ -27,27 +27,27 @@ import net.minecraft.util.math.ChunkPos;
 public final class AutoRecallBatchGameTests {
     private static final AtomicInteger REMOTE_CHUNKS = new AtomicInteger();
 
-    @GameTest(maxTicks = 800, structure = "pet_recall_gametest:empty_32")
+    @GameTest(maxTicks = 800, structure = "pet_recall_gametest:empty_32", environment = "pet_recall_gametest:isolated/one_trigger_recalls_forty_unloaded_pets_in_batches")
     public void oneTriggerRecallsFortyUnloadedPetsInBatches(TestContext context) {
         run(context, false, false, false, false);
     }
 
-    @GameTest(maxTicks = 800, structure = "pet_recall_gametest:empty_32")
+    @GameTest(maxTicks = 800, structure = "pet_recall_gametest:empty_32", environment = "pet_recall_gametest:isolated/failed_first_batch_does_not_strand_healthy_pets")
     public void failedFirstBatchDoesNotStrandHealthyPets(TestContext context) {
         run(context, true, false, false, false);
     }
 
-    @GameTest(maxTicks = 800, structure = "pet_recall_gametest:empty_32")
+    @GameTest(maxTicks = 800, structure = "pet_recall_gametest:empty_32", environment = "pet_recall_gametest:isolated/jump_pauses_queue_and_current_pet_state_is_rechecked")
     public void jumpPausesQueueAndCurrentPetStateIsRechecked(TestContext context) {
         run(context, false, true, false, false);
     }
 
-    @GameTest(maxTicks = 1000, structure = "pet_recall_gametest:empty_32")
+    @GameTest(maxTicks = 1000, structure = "pet_recall_gametest:empty_32", environment = "pet_recall_gametest:isolated/scattered_standing_pets_recall_but_sitting_pets_stay_in_their_chunks")
     public void scatteredStandingPetsRecallButSittingPetsStayInTheirChunks(TestContext context) {
         run(context, false, false, true, false);
     }
 
-    @GameTest(maxTicks = 800, structure = "pet_recall_gametest:empty_32")
+    @GameTest(maxTicks = 800, structure = "pet_recall_gametest:empty_32", environment = "pet_recall_gametest:isolated/jump_during_chunk_loading_does_not_drop_the_in_flight_batch")
     public void jumpDuringChunkLoadingDoesNotDropTheInFlightBatch(TestContext context) {
         run(context, false, true, false, true);
     }
