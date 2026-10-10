@@ -72,6 +72,7 @@ public final class PopularPetCompatibilityGameTests {
         final List<UUID> controls = new ArrayList<>();
         final Map<UUID, PetRecord> records = new HashMap<>();
         final Map<UUID, CompoundTag> state = new HashMap<>();
+        final Map<UUID, Integer> numbers = new HashMap<>();
         final ChunkPos source = new ChunkPos(31000, 31000);
         final BlockPos remote;
         ServerPlayer owner;
@@ -80,6 +81,7 @@ public final class PopularPetCompatibilityGameTests {
         RecallSummary result;
         int phase;
         int callbacks;
+        boolean cleaned;
 
         Fixture(GameTestHelper context, JsonObject spec) {
             this.context = context;
@@ -122,8 +124,6 @@ public final class PopularPetCompatibilityGameTests {
             pet.setNoGravity(true);
             pet.setPersistenceRequired();
             pet.setHealth(pet.getMaxHealth());
-            pet.setCustomName(Component.literal("real mod pet " + i));
-            pet.addTag("real_mod_state_" + i);
             if ("indypets".equals(spec.get("slug").getAsString())) {
                 CompoundTag modified = data(pet);
                 modified.putBoolean("AllowedToFollow", false);
@@ -149,16 +149,25 @@ public final class PopularPetCompatibilityGameTests {
                 require(context, errors.isEmpty() && data(pet).getInt("level_normal").orElse(-1) == 12,
                         "Doggy Talents fixture must really contain non-default saved levels");
             }
+            Component name = Component.literal("real mod pet " + i);
+            if ("doggy-talents-next".equals(spec.get("slug").getAsString())) {
+                pet.getClass().getMethod("setDogCustomName", Component.class).invoke(pet, name);
+            } else pet.setCustomName(name);
+            pet.addTag("real_mod_state_" + i);
+            require(context, pet.getCustomName() != null && name.getString().equals(pet.getCustomName().getString())
+                    && pet.entityTags().contains("real_mod_state_" + i), "Fixture must really contain its exact custom name and tag before saving");
             pet.setHealth(pet.getMaxHealth());
             require(context, world.addFreshEntity(pet), "A real installed companion must spawn");
             PetRecallMod.getTracker().observe(pet, world);
             records.put(pet.getUUID(), PetIndexState.get(world.getServer()).getPet(pet.getUUID()));
             state.put(pet.getUUID(), data(pet));
+            numbers.put(pet.getUUID(), i);
             for (var key : spec.getAsJsonArray("preservedKeys")) require(context, state.get(pet.getUUID()).contains(key.getAsString()), "Fixture must contain actual custom data: " + key);
             (i < 20 ? pets : controls).add(pet.getUUID());
         }
 
         void tick() {
+            if (cleaned) return;
             try {
                 if (phase == 0) {
                     if (!VersionCompat.areChunkEntitiesLoaded(world, source)) return;
@@ -222,8 +231,8 @@ public final class PopularPetCompatibilityGameTests {
                     String field = key.getAsString();
                     require(context, java.util.Objects.equals(state.get(id).get(field), current.get(field)), "Real custom payload must survive byte-for-byte: " + field);
                 }
-                require(context, pet.getCustomName() != null && pet.getCustomName().getString().startsWith("real mod pet ")
-                        && pet.entityTags().stream().anyMatch(t -> t.startsWith("real_mod_state_")), "Custom name and tags survive");
+                require(context, pet.getCustomName() != null && pet.getCustomName().getString().equals("real mod pet " + numbers.get(id))
+                        && pet.entityTags().contains("real_mod_state_" + numbers.get(id)), "Exact custom name and tag survive for the original UUID");
                 require(context, pets.contains(id) ? pet.distanceToSqr(owner) <= 144.0D
                         : pet.getX() == original.x() && pet.getY() == original.y() && pet.getZ() == original.z(), "Only eligible owner's companions can move");
                 int count = 0;
@@ -233,6 +242,8 @@ public final class PopularPetCompatibilityGameTests {
         }
 
         void cleanup() {
+            if (cleaned) return;
+            cleaned = true;
             world.setChunkForced(source.x(), source.z(), false);
             for (UUID id : records.keySet()) {
                 Entity entity = world.getEntity(id);
