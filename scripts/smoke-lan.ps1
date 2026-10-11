@@ -155,7 +155,7 @@ function Quote-PowerShellString {
 $repoRoot = Split-Path -Parent $PSScriptRoot
 $runClient = Join-Path $PSScriptRoot "run-client.ps1"
 $resolvedJavaHome = Resolve-JavaHome -PreferredJavaHome $JavaHome
-$effectiveModVersion = if ($ModVersion) { $ModVersion } else { "1.1.1" }
+$effectiveModVersion = if ($ModVersion) { $ModVersion } else { "1.1.2" }
 $port = Get-FreeTcpPort
 $smokeDir = Join-Path $repoRoot "build\tmp\smoke-lan\$Version"
 $worldPath = Join-Path $repoRoot ("run\shared\saves\" + $WorldName)
