@@ -125,13 +125,16 @@ All commands require admin/operator permission.
 
 | Minecraft | Fabric API | Status |
 | --- | --- | --- |
-| `26.1` | `0.145.1+26.1` | Candidate; GameTests passed |
-| `26.1.1` | `0.145.4+26.1.1` | Candidate; GameTests passed |
-| `26.1.2` | `0.155.3+26.1.2` | Candidate; GameTests passed |
-| `26.2` | `0.161.0+26.2` | Candidate; GameTests passed |
-| `26.3` | `0.162.0+26.3` | Candidate; GameTests passed |
+| `26.1` | `0.145.1+26.1` | Supported |
+| `26.1.1` | `0.145.4+26.1.1` | Supported |
+| `26.1.2` | `0.155.3+26.1.2` | Supported |
+| `26.2` | `0.161.0+26.2` | Supported |
+| `26.3` | `0.162.0+26.3` | Supported |
 
 These targets require Java `25`, Fabric Loader `0.19.5` or later, and the matching Fabric API. Each jar declares one exact Minecraft version.
+
+The [1.2.0 release](https://github.com/KristopherZlo/No-Lost-Pets/releases/tag/v1.2.0) includes all nine builds for Minecraft 1.21.8 through 26.3.
+Select `NoLostPets-fabric-<Minecraft version>.jar`. Install only one NoLostPets JAR.
 
 ## Installation
 
