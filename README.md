@@ -125,10 +125,14 @@ All commands require admin/operator permission.
 
 | Minecraft | Status | Jar | Notes |
 | --- | --- | --- | --- |
-| `1.21.8` | Supported | Universal | Baseline build target |
-| `1.21.9` | Supported | Universal | Same jar |
-| `1.21.10` | Supported | Universal | Same jar |
-| `1.21.11` | Supported | Universal | Same jar |
+| `1.21.8` | Supported | `NoLostPets-fabric-1.21.8.jar` | Exact game version |
+| `1.21.9` | Supported | `NoLostPets-fabric-1.21.9.jar` | Exact game version |
+| `1.21.10` | Supported | `NoLostPets-fabric-1.21.10.jar` | Exact game version |
+| `1.21.11` | Supported | `NoLostPets-fabric-1.21.11.jar` | Exact game version |
+
+The [1.2.0 release](https://github.com/KristopherZlo/No-Lost-Pets/releases/tag/v1.2.0) also includes builds for Minecraft `26.1`, `26.1.1`, `26.1.2`, `26.2`, and `26.3`.
+Select the JAR for your exact Minecraft version. Install only one NoLostPets JAR.
+The [mc-26x branch](https://github.com/KristopherZlo/No-Lost-Pets/tree/mc-26x) contains the source code for Minecraft 26.
 
 ## Installation
 
