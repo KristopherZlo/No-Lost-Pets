@@ -6,6 +6,7 @@ import com.creas.petrecall.index.PetRecord;
 import com.creas.petrecall.recall.PetRecallService;
 import com.creas.petrecall.recall.PetRecallService.RecallSummary;
 import com.creas.petrecall.runtime.PetTracker;
+import com.creas.petrecall.util.PetOwnershipUtil;
 import com.creas.petrecall.util.VersionCompat;
 import com.mojang.serialization.Codec;
 import com.mojang.serialization.DataResult;
@@ -23,6 +24,7 @@ import net.minecraft.world.InteractionHand;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.EntitySpawnReason;
 import net.minecraft.world.entity.EntityType;
+import net.minecraft.world.entity.animal.nautilus.AbstractNautilus;
 import net.minecraft.world.entity.animal.pig.Pig;
 import net.minecraft.world.entity.animal.wolf.Wolf;
 import net.minecraft.world.item.DyeColor;
@@ -36,6 +38,76 @@ import net.minecraft.world.phys.Vec3;
 
 public final class PetRecallBehaviorGameTests {
     private static final AtomicInteger REMOTE_CHUNK_SEQUENCE = new AtomicInteger();
+
+    @GameTest(maxTicks = 40, environment = "pet_recall_gametest:isolated/nautilus_is_not_indexed_as_companion")
+    public void nautilusIsNotIndexedAsCompanion(GameTestHelper context) {
+        assertNautilusExcluded(context, "minecraft:nautilus", false);
+    }
+
+    @GameTest(maxTicks = 40, environment = "pet_recall_gametest:isolated/zombie_nautilus_is_not_indexed_as_companion")
+    public void zombieNautilusIsNotIndexedAsCompanion(GameTestHelper context) {
+        assertNautilusExcluded(context, "minecraft:zombie_nautilus", false);
+    }
+
+    @GameTest(maxTicks = 40, environment = "pet_recall_gametest:isolated/stale_nautilus_record_cannot_force_recall_mount")
+    public void staleNautilusRecordCannotForceRecallMount(GameTestHelper context) {
+        assertNautilusExcluded(context, "minecraft:nautilus", true);
+    }
+
+    @GameTest(maxTicks = 40, environment = "pet_recall_gametest:isolated/stale_zombie_nautilus_record_cannot_force_recall_mount")
+    public void staleZombieNautilusRecordCannotForceRecallMount(GameTestHelper context) {
+        assertNautilusExcluded(context, "minecraft:zombie_nautilus", true);
+    }
+
+    @SuppressWarnings("unchecked")
+    private static void assertNautilusExcluded(GameTestHelper context, String typeId, boolean staleRecord) {
+        Fixture f = new Fixture(context);
+        EntityType<AbstractNautilus> type = (EntityType<AbstractNautilus>)
+                BuiltInRegistries.ENTITY_TYPE.getValue(Identifier.parse(typeId));
+        AbstractNautilus mount = context.spawnWithNoFreeWill(type, new BlockPos(1, 2, 1));
+        mount.setTame(true, true);
+        mount.setOwner(f.player);
+        mount.setOrderedToSit(false);
+        if (staleRecord) {
+            // Simulate an index written before nautilus mounts were excluded.
+            PetRecord old = PetRecord.fromEntity(f.world, mount, f.player.getUUID(), false, mount.getHealth());
+            PetIndexState.get(f.world.getServer()).put(old);
+            Vec3 before = position(mount);
+            AtomicReference<RecallSummary> result = new AtomicReference<>();
+            check(context, f.service.recallSpecificPetsForPlayerAsync(f.player, List.of(old), true, result::set),
+                    "Recall must accept the old record");
+            context.failIfEver(() -> {
+                f.service.onServerTick(f.world.getServer());
+                if (result.get() == null) {
+                    return;
+                }
+                try {
+                    context.assertValueEqual(0, result.get().recalled, Component.literal("Mount must not be recalled"));
+                    context.assertValueEqual(1, result.get().skipped, Component.literal("Unsupported mount must be skipped"));
+                    context.assertValueEqual(before, position(mount), Component.literal("Mount must stay at its source"));
+                    check(context, f.world.getEntity(mount.getUUID()) == mount, "Original mount must survive");
+                    f.assertIdle();
+                    check(context, PetIndexState.get(f.world.getServer()).getPet(mount.getUUID()) == null,
+                            "Old mount record must be removed");
+                } finally {
+                    f.cleanup(mount);
+                }
+                context.succeed();
+            });
+            return;
+        }
+        try {
+            check(context, PetOwnershipUtil.getOwnedPetData(mount) == null, "Mount is not a companion pet");
+            f.tracker.observe(mount, f.world);
+            check(context, f.tracker.getLoadedPet(mount.getUUID()) == null, "Mount must not be tracked");
+            check(context, PetIndexState.get(f.world.getServer()).getPet(mount.getUUID()) == null,
+                    "Mount must not remain in the pet index");
+        } finally {
+            f.cleanup(mount);
+        }
+        context.succeed();
+    }
+
     @GameTest(maxTicks = 40, environment = "pet_recall_gametest:isolated/duplicate_records_recall_one_entity_exactly_once")
     public void duplicateRecordsRecallOneEntityExactlyOnce(GameTestHelper context) {
         Fixture f = new Fixture(context);
