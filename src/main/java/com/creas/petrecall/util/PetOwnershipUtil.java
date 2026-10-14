@@ -11,6 +11,7 @@ import net.minecraft.world.entity.LivingEntity;
 import net.minecraft.world.entity.TamableAnimal;
 import net.minecraft.world.entity.TraceableEntity;
 import net.minecraft.world.entity.animal.equine.AbstractHorse;
+import net.minecraft.world.entity.animal.nautilus.AbstractNautilus;
 import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.level.storage.TagValueOutput;
 import org.jetbrains.annotations.Nullable;
@@ -38,6 +39,11 @@ public final class PetOwnershipUtil {
 
     @Nullable
     public static OwnedPetData getOwnedPetData(Entity entity) {
+        // Nautilus mounts are tameable, but do not follow their owner like companion pets.
+        if (entity instanceof AbstractNautilus) {
+            return null;
+        }
+
         if (entity instanceof TamableAnimal tameable) {
             if (!tameable.isTame()) {
                 return null;

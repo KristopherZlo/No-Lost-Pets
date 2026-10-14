@@ -107,6 +107,7 @@ All commands require admin/operator permission.
 - Vanilla `TamableAnimal` mobs are supported directly.
 - Many modded pets are supported if they expose normal owner UUID and sitting/follow signals in NBT.
 - Tamed mounts such as horses, donkeys, mules, llamas, camels, and similar `AbstractHorse` mobs are intentionally excluded.
+- Nautilus and zombie nautilus mounts are also excluded, even though they extend `TamableAnimal`.
 
 ### Stale Record Handling
 
